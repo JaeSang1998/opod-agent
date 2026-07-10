@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../openai/types.js";
+import { lastUserMessage } from "../openai/messages.js";
 
 /**
  * Hot-path gate (docs/adr/0005). A memory-update job is enqueued every turn, so
@@ -21,14 +22,4 @@ export function buildTurnExchange(
     exchange.push({ role: "assistant", content: assistantContent });
   }
   return exchange;
-}
-
-function lastUserMessage(messages: ChatMessage[]): ChatMessage | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m && m.role === "user" && typeof m.content === "string" && m.content.trim().length > 0) {
-      return m;
-    }
-  }
-  return null;
 }

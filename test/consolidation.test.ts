@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { ConsolidationService, parseObservations } from "../src/memory/consolidation.js";
+import { ConsolidationService } from "../src/memory/consolidation.js";
+import { parseObservations } from "../src/memory/parsing.js";
 import { Reflector } from "../src/memory/reflection.js";
 import { StubMemoryStore } from "../src/memory/stub/StubMemoryStore.js";
 import { FakeProvider } from "./fakeProvider.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseLines, parseInsights } from "../src/memory/reflection.js";
+import { parseLines, parseInsights } from "../src/memory/parsing.js";
 import type { LongTermMemory } from "../src/memory/types.js";
 
 function obs(id: string, content: string): LongTermMemory {
