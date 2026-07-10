@@ -1,4 +1,5 @@
 import type { JobQueue, MemoryUpdateJob } from "../JobQueue.js";
+import { type Logger, noopLogger } from "../../logging/logger.js";
 
 /**
  * In-memory JobQueue. Records enqueued jobs (inspectable in tests) and logs them.
@@ -7,11 +8,11 @@ import type { JobQueue, MemoryUpdateJob } from "../JobQueue.js";
 export class StubJobQueue implements JobQueue {
   readonly enqueued: MemoryUpdateJob[] = [];
 
-  constructor(private readonly log: (msg: string, meta?: unknown) => void = () => {}) {}
+  constructor(private readonly log: Logger = noopLogger) {}
 
   async enqueueMemoryUpdate(job: MemoryUpdateJob): Promise<void> {
     this.enqueued.push(job);
-    this.log("enqueued memory-update job", {
+    this.log.debug("enqueued memory-update job", {
       sessionId: job.sessionId,
       characterId: job.characterId,
       refreshSummary: job.refreshSummary,

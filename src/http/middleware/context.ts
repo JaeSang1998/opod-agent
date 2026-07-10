@@ -26,8 +26,3 @@ export const contextMiddleware: MiddlewareHandler = async (c, next) => {
 export function getRequestContext(c: Context): RequestContext {
   return (c.get(CONTEXT_KEY) as RequestContext | undefined) ?? {};
 }
-
-/** True when we have enough context to load a persona and personalize the turn. */
-export function isPersonalized(ctx: RequestContext): boolean {
-  return Boolean(ctx.characterId);
-}

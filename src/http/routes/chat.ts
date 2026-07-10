@@ -40,7 +40,7 @@ export function chatRoute(container: Container): Hono {
           }
           await sse.writeSSE({ data: "[DONE]" });
         } catch (err) {
-          container.log("stream error", { err: String(err) });
+          container.log.error("stream error", { err: String(err) });
           await sse.writeSSE({ data: JSON.stringify(openaiError("server_error", String(err))) });
         } finally {
           // Autonomous consolidation runs once the full reply is known.
@@ -58,7 +58,7 @@ export function chatRoute(container: Container): Hono {
       await prepared.postTurn(assistant);
       return c.json(res);
     } catch (err) {
-      container.log("chat error", { err: String(err) });
+      container.log.error("chat error", { err: String(err) });
       return c.json(openaiError("server_error", String(err)), 500);
     }
   });

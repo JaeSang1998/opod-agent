@@ -8,7 +8,7 @@ const container = buildContainer(env);
 const app = createApp(container);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-  container.log(`opod-agent listening on :${info.port}`, {
+  container.log.info(`opod-agent listening on :${info.port}`, {
     provider: env.LLM_BASE_URL,
     model: env.LLM_MODEL,
     store: env.STORE_DRIVER,

@@ -5,8 +5,10 @@ import type { MemoryStore } from "../memory/MemoryStore.js";
 import type { JobQueue } from "../queue/JobQueue.js";
 import type { RequestContext } from "../http/middleware/context.js";
 import type { ChatCompletionRequest, ChatMessage } from "../openai/types.js";
+import { lastUserText } from "../openai/messages.js";
 import type { CoreMemory, LongTermMemory, Summary } from "../memory/types.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";
+import { type Logger, noopLogger } from "../logging/logger.js";
 import { assembleSystemPrompt } from "../prompt/assemble.js";
 import { buildTurnExchange } from "./consolidationDecider.js";
 
@@ -36,7 +38,7 @@ export class ChatService {
     private readonly memory: MemoryStore,
     private readonly queue: JobQueue,
     private readonly config: ChatServiceConfig,
-    private readonly log: (msg: string, meta?: unknown) => void = () => {},
+    private readonly log: Logger = noopLogger,
   ) {}
 
   async prepare(body: ChatCompletionRequest, ctx: RequestContext): Promise<PreparedTurn> {
@@ -50,7 +52,7 @@ export class ChatService {
 
     if (!persona) {
       if (ctx.characterId) {
-        this.log("no published persona; degrading to proxy", { characterId: ctx.characterId });
+        this.log.info("no published persona; degrading to proxy", { characterId: ctx.characterId });
       }
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
@@ -95,7 +97,7 @@ export class ChatService {
       );
     } catch (err) {
       // Retrieval must never break a reply.
-      this.log("memory retrieval failed; continuing without it", { err: String(err) });
+      this.log.warn("memory retrieval failed; continuing without it", { err: String(err) });
       return [];
     }
   }
@@ -105,7 +107,7 @@ export class ChatService {
     try {
       return await this.memory.getCoreMemory({ userId: ctx.userId, characterId: ctx.characterId });
     } catch (err) {
-      this.log("core memory fetch failed; continuing without it", { err: String(err) });
+      this.log.warn("core memory fetch failed; continuing without it", { err: String(err) });
       return null;
     }
   }
@@ -115,7 +117,7 @@ export class ChatService {
     try {
       return await this.memory.getSummary(ctx.sessionId);
     } catch (err) {
-      this.log("summary fetch failed; continuing without it", { err: String(err) });
+      this.log.warn("summary fetch failed; continuing without it", { err: String(err) });
       return null;
     }
   }
@@ -140,15 +142,7 @@ export class ChatService {
         refreshSummary: true,
       });
     } catch (err) {
-      this.log("failed to enqueue memory-update job", { err: String(err) });
+      this.log.warn("failed to enqueue memory-update job", { err: String(err) });
     }
   }
-}
-
-function lastUserText(messages: ChatMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m && m.role === "user" && typeof m.content === "string") return m.content;
-  }
-  return null;
 }

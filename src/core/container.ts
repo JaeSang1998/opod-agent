@@ -1,4 +1,5 @@
 import type { Env } from "../config/env.js";
+import { createLogger, type Logger } from "../logging/logger.js";
 import { OpenAICompatProvider } from "../provider/OpenAICompatProvider.js";
 import type { LLMProvider } from "../provider/LLMProvider.js";
 import type { PersonaStore } from "../persona/PersonaStore.js";
@@ -20,7 +21,7 @@ export interface Container {
   queue: JobQueue;
   chat: ChatService;
   consolidation: ConsolidationService;
-  log: (msg: string, meta?: unknown) => void;
+  log: Logger;
 }
 
 /**
@@ -29,7 +30,7 @@ export interface Container {
  * (docs/adr/0002).
  */
 export function buildContainer(env: Env): Container {
-  const log = makeLogger(env.LOG_LEVEL);
+  const log = createLogger(env.LOG_LEVEL);
   const provider = new OpenAICompatProvider(env);
 
   if (env.STORE_DRIVER !== "stub") {
@@ -77,14 +78,4 @@ export function buildContainer(env: Env): Container {
   });
 
   return { env, provider, personas, memory, queue, chat, consolidation, log };
-}
-
-function makeLogger(level: Env["LOG_LEVEL"]) {
-  const order = { debug: 0, info: 1, warn: 2, error: 3 } as const;
-  const threshold = order[level];
-  return (msg: string, meta?: unknown) => {
-    if (order.info < threshold) return;
-    const line = meta ? `${msg} ${JSON.stringify(meta)}` : msg;
-    console.log(`[opod-agent] ${line}`);
-  };
 }

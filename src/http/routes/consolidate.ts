@@ -29,7 +29,7 @@ export function consolidateRoute(container: Container): Hono {
       const result = await container.consolidation.consolidate(parsed.data);
       return c.json({ ok: true, ...result });
     } catch (err) {
-      container.log("consolidation error", { err: String(err) });
+      container.log.error("consolidation error", { err: String(err) });
       return c.json({ error: { type: "server_error", message: String(err) } }, 500);
     }
   });
