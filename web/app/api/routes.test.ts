@@ -137,11 +137,13 @@ describe("Next route contracts", () => {
     const frames = [
       `event: opod\ndata: ${JSON.stringify({
         args: "{}",
+        callId: "call-time",
         iteration: 0,
         tool: "get_time",
         type: "tool_call",
       })}\n\n`,
       `event: opod\ndata: ${JSON.stringify({
+        callId: "call-time",
         iteration: 0,
         ms: 12,
         result: "noon",
@@ -170,7 +172,7 @@ describe("Next route contracts", () => {
     const stream = await response.text();
 
     expect(stream).toContain("data-opodTool");
-    expect(stream).toContain("tool-0-get_time-0");
+    expect(stream).toContain("tool-0-call-time");
     expect(stream).toContain("running");
     expect(stream).toContain("done");
     expect(stream).toContain("answer");

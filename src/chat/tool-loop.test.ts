@@ -228,6 +228,7 @@ describe("runToolLoop", () => {
     expect(events).toHaveLength(2);
     expect(events[0]).toEqual({
       type: "tool_call",
+      callId: "c1",
       iteration: 0,
       tool: "get_time",
       args: '{"timezone":"UTC"}',
@@ -235,6 +236,7 @@ describe("runToolLoop", () => {
     const result = events[1];
     expect(result?.type).toBe("tool_result");
     if (result?.type !== "tool_result") throw new Error("expected tool_result");
+    expect(result.callId).toBe("c1");
     expect(result.iteration).toBe(0);
     expect(result.tool).toBe("get_time");
     expect(typeof result.ms).toBe("number");
@@ -446,12 +448,14 @@ describe("runToolLoopStream", () => {
     expect(events).toHaveLength(2);
     expect(events[0]).toEqual({
       type: "tool_call",
+      callId: "c1",
       iteration: 0,
       tool: "get_weather",
       args: '{"location":"Zurich"}',
     });
     const result = events[1];
     if (result?.type !== "tool_result") throw new Error("expected tool_result");
+    expect(result.callId).toBe("c1");
     expect(result.iteration).toBe(0);
     expect(result.tool).toBe("get_weather");
     expect(typeof result.ms).toBe("number");

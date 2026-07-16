@@ -55,12 +55,13 @@ The default OpenAI-compatible surface stays byte-identical, but two things made 
 a client and are now addressed behind a single transport-level opt-in, the `x-opod-debug` request header (any
 non-empty value). It is read from the raw request only and never enters `RequestContext`/`ChatContext` — it
 carries no identity, only "show me the plumbing". When set, the tool loop's `onEvent` hook surfaces
-`{type:"tool_call"|"tool_result", iteration, tool, …}` events: on the streaming path each is written as an
+`{type:"tool_call"|"tool_result", callId, iteration, tool, …}` events: on the streaming path each is written as an
 SSE `event: opod` frame (all writes serialized through one promise chain so event and chunk frames never
 interleave), and on the non-streaming path they are collected into an `opod_debug: { events }` field on the
 JSON body. Without the header there are zero extra frames and no extra field — a strict client sees exactly
-the completion it saw before. `onEvent` is best-effort: a throwing listener is swallowed and can never break a
-reply.
+the completion it saw before. The Provider call id joins results to calls even when parallel invocations of
+the same tool finish out of order. `onEvent` is best-effort: a throwing listener is swallowed and can never
+break a reply.
 
 Separately, the streaming loop now passes a turn's nonstandard `reasoning` deltas straight through instead of
 buffering them. Local reasoning models (live-verified gemma) emit `delta.reasoning` fragments — with

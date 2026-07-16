@@ -16,8 +16,15 @@ import {
  * see docs/adr/0006 (the x-opod-debug channel).
  */
 export type ToolLoopEvent =
-  | { type: "tool_call"; iteration: number; tool: string; args: string }
-  | { type: "tool_result"; iteration: number; tool: string; ms: number; result: string };
+  | { type: "tool_call"; callId: string; iteration: number; tool: string; args: string }
+  | {
+      type: "tool_result";
+      callId: string;
+      iteration: number;
+      tool: string;
+      ms: number;
+      result: string;
+    };
 
 export interface ToolLoopOptions {
   provider: LLMProvider;
@@ -217,7 +224,13 @@ async function invoke(
   onEvent?: (event: ToolLoopEvent) => void,
 ): Promise<{ call: ToolCall; content: string }> {
   const tool = call.function.name;
-  emit(onEvent, { type: "tool_call", iteration, tool, args: call.function.arguments });
+  emit(onEvent, {
+    type: "tool_call",
+    callId: call.id,
+    iteration,
+    tool,
+    args: call.function.arguments,
+  });
   const started = Date.now();
   const cached = cache.has(call.id);
   let pending = cache.get(call.id);
@@ -228,7 +241,14 @@ async function invoke(
   const content = await pending;
   const ms = Date.now() - started;
   ctx.log.info("tool call", { tool, ms, cached });
-  emit(onEvent, { type: "tool_result", iteration, tool, ms, result: content.slice(0, RESULT_PREVIEW) });
+  emit(onEvent, {
+    type: "tool_result",
+    callId: call.id,
+    iteration,
+    tool,
+    ms,
+    result: content.slice(0, RESULT_PREVIEW),
+  });
   return { call, content };
 }
 
