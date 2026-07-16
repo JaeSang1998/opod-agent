@@ -34,7 +34,7 @@ const EnvSchema = z.object({
   REFLECTION_IMPORTANCE_THRESHOLD: z.coerce.number().positive().default(25),
   REFLECTION_RECENT_N: z.coerce.number().int().positive().default(20),
   REFLECTION_QUESTIONS_PER_PASS: z.coerce.number().int().positive().default(3),
-  REFLECTION_INSIGHTS_PER_QUESTION: z.coerce.number().int().positive().default(2),
+  REFLECTIONS_PER_QUESTION: z.coerce.number().int().positive().default(2),
   REFLECTION_IMPORTANCE: z.coerce.number().int().min(1).max(10).default(7),
   CORE_MEMORY_CHAR_LIMIT: z.coerce.number().int().positive().default(2000),
   CONSOLIDATION_SUMMARY_TURN_THRESHOLD: z.coerce.number().int().positive().default(8),

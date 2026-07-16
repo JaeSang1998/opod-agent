@@ -33,7 +33,9 @@ export class FakeProvider implements LLMProvider {
   private respondTo(system: string): string {
     if (system.includes("Extract durable Observations")) return this.observationsJson;
     if (system.includes("salient high-level questions")) return "What does the user care about?";
-    if (system.includes("high-level insights")) return "The user values companionship (because of 1)";
+    if (system.includes("high-level Reflections")) {
+      return "The user values companionship (because of 1)";
+    }
     if (system.includes("compact Core Memory")) return "Nova the cat's owner; enjoys late chats.";
     if (system.includes("running summary")) return "They introduced their cat Nova.";
     return this.reply;

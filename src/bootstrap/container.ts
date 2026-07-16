@@ -102,7 +102,7 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
   const reflector = new Reflector(provider, memory, {
     recentN: env.REFLECTION_RECENT_N,
     questionsPerPass: env.REFLECTION_QUESTIONS_PER_PASS,
-    insightsPerQuestion: env.REFLECTION_INSIGHTS_PER_QUESTION,
+    reflectionsPerQuestion: env.REFLECTIONS_PER_QUESTION,
     retrieveTopK: env.MEMORY_RETRIEVE_TOP_K,
     reflectionImportance: env.REFLECTION_IMPORTANCE,
     coreCharLimit: env.CORE_MEMORY_CHAR_LIMIT,

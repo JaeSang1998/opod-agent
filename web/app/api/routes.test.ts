@@ -147,4 +147,55 @@ describe("Next route contracts", () => {
     expect(response.headers.get(OPOD_HEADERS.requestId)).toBe("worker-trace-2");
     await expect(response.text()).resolves.toBe("opod-agent unavailable");
   });
+
+  it("maps a rejected consolidation response body to a safe 502", async () => {
+    fetchOpodMock.mockResolvedValue({
+      status: 200,
+      text: vi.fn().mockRejectedValue(new Error("body read failed")),
+    } as unknown as Response);
+    const response = await consolidatePost(
+      new Request("http://playground.test/api/consolidate", {
+        body: JSON.stringify({
+          characterId: "luna",
+          correlationId: "worker-trace-3",
+          idempotencyKey: "job-3",
+          reason: "manual",
+          refreshSummary: false,
+          sessionId: "s1",
+          turns: [{ role: "user", content: "hello" }],
+          userId: "u1",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get(OPOD_HEADERS.requestId)).toBe("worker-trace-3");
+  });
+
+  it.each([
+    ["malformed frame", "data: not-json\n\ndata: [DONE]\n\n"],
+    ["EOF before done", `data: ${JSON.stringify({ choices: [{ delta: { content: "partial" } }] })}\n\n`],
+  ])("surfaces an upstream SSE protocol error for %s", async (_label, frames) => {
+    fetchOpodMock.mockResolvedValue(
+      new Response(frames, {
+        headers: { "content-type": "text/event-stream" },
+        status: 200,
+      }),
+    );
+
+    const response = await chatPost(
+      new Request("http://playground.test/api/chat", {
+        body: JSON.stringify({
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toContain("stream failed");
+  });
 });

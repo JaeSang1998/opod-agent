@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type OpenAI from "openai";
-import { parseLines, parseInsights } from "./parsing.js";
+import { parseLines, parseReflections } from "./parsing.js";
 import type { ArchivalMemory } from "./types.js";
 import { Reflector, type ReflectionConfig } from "./reflection.js";
 import { StubMemoryStore } from "./stub-memory-store.js";
@@ -17,23 +17,23 @@ describe("parseLines", () => {
   });
 });
 
-describe("parseInsights", () => {
+describe("parseReflections", () => {
   const evidence = [obs("m1", "a"), obs("m2", "b"), obs("m3", "c")];
 
   it("maps 1-based citations to evidence ids", () => {
-    const out = parseInsights("The user values companionship (because of 1, 3)", evidence);
+    const out = parseReflections("The user values companionship (because of 1, 3)", evidence);
     expect(out[0]?.content).toBe("The user values companionship");
     expect(out[0]?.evidence).toEqual(["m1", "m3"]);
   });
 
-  it("handles insights without citations", () => {
-    const out = parseInsights("A standalone insight", evidence);
-    expect(out[0]?.content).toBe("A standalone insight");
+  it("handles Reflections without citations", () => {
+    const out = parseReflections("A standalone Reflection", evidence);
+    expect(out[0]?.content).toBe("A standalone Reflection");
     expect(out[0]?.evidence).toEqual([]);
   });
 
   it("ignores out-of-range citation numbers", () => {
-    const out = parseInsights("Insight (because of 9)", evidence);
+    const out = parseReflections("Reflection (because of 9)", evidence);
     expect(out[0]?.evidence).toEqual([]);
   });
 });
@@ -87,7 +87,7 @@ describe("Reflector", () => {
     return {
       recentN: 20,
       questionsPerPass: 1,
-      insightsPerQuestion: 1,
+      reflectionsPerQuestion: 1,
       retrieveTopK: 5,
       reflectionImportance: 7,
       coreCharLimit: 2000,
@@ -105,7 +105,7 @@ describe("Reflector", () => {
 
   // Distinctive substrings lifted from reflection.ts's actual system prompts.
   const SALIENT = "salient high-level questions";
-  const INSIGHTS = "high-level insights";
+  const REFLECTIONS = "high-level Reflections";
   const CORE = "compact Core Memory";
 
   it("(a) no-ops without any provider calls when there are no recent observations", async () => {
@@ -128,7 +128,7 @@ describe("Reflector", () => {
     const oversized = "A".repeat(200);
     const provider = new ScriptedProvider((system) => {
       if (system.includes(SALIENT)) return "What matters to them?";
-      if (system.includes(INSIGHTS)) return "";
+      if (system.includes(REFLECTIONS)) return "";
       if (system.includes(CORE)) return oversized;
       return "";
     });
@@ -147,7 +147,7 @@ describe("Reflector", () => {
   it("(c) leaves the core block untouched when the rewrite returns empty", async () => {
     const provider = new ScriptedProvider((system) => {
       if (system.includes(SALIENT)) return "What matters to them?";
-      if (system.includes(INSIGHTS)) return "";
+      if (system.includes(REFLECTIONS)) return "";
       if (system.includes(CORE)) return "";
       return "";
     });
@@ -161,10 +161,10 @@ describe("Reflector", () => {
     expect(await memory.getCoreMemory(key)).toBeNull();
   });
 
-  it("(d) stores no insights when the synthesis reply has no parseable lines", async () => {
+  it("(d) stores no Reflections when the synthesis reply has no parseable lines", async () => {
     const provider = new ScriptedProvider((system) => {
       if (system.includes(SALIENT)) return "What matters to them?";
-      if (system.includes(INSIGHTS)) return "\n   \n"; // unusable: nothing to parse
+      if (system.includes(REFLECTIONS)) return "\n   \n"; // unusable: nothing to parse
       if (system.includes(CORE)) return "Tidy Core Memory.";
       return "";
     });
@@ -177,7 +177,7 @@ describe("Reflector", () => {
     expect(result.reflectionsStored).toBe(0);
     // Non-vacuous: evidence was retrieved so the synthesis prompt really ran.
     const reachedSynthesis = provider.chatCalls.some((c) =>
-      String(c.messages[0]?.content ?? "").includes(INSIGHTS),
+      String(c.messages[0]?.content ?? "").includes(REFLECTIONS),
     );
     expect(reachedSynthesis).toBe(true);
     // And nothing of kind "reflection" was persisted.

@@ -14,7 +14,7 @@ function reflectorFor(provider: FakeProvider, memory: StubMemoryStore) {
     {
       recentN: 20,
       questionsPerPass: 1,
-      insightsPerQuestion: 1,
+      reflectionsPerQuestion: 1,
       retrieveTopK: 5,
       reflectionImportance: 7,
       coreCharLimit: 2000,
@@ -36,7 +36,9 @@ describe("parseObservations", () => {
     expect(parseObservations('[{"content":"y","importance":0}]')[0]?.importance).toBe(1);
   });
   it("tolerates bare strings with a default importance", () => {
-    expect(parseObservations('["just a fact"]')).toEqual([{ content: "just a fact", importance: 5 }]);
+    expect(parseObservations('["just an observation"]')).toEqual([
+      { content: "just an observation", importance: 5 },
+    ]);
   });
   it("returns empty for []", () => {
     expect(parseObservations("[]")).toEqual([]);

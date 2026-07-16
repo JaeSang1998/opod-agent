@@ -16,7 +16,7 @@ lines of work:
   stream where each item carries an **importance/poignancy** score (1-10); retrieval
   ranks by a weighted, min-max-normalized sum of **recency · importance · relevance**;
   and **reflection** fires when the summed importance of recent observations crosses a
-  threshold (150/sim-day in the paper), synthesizing higher-level insights (with
+  threshold (150/sim-day in the paper), synthesizing higher-level Reflections (with
   evidence citations) that are appended back into the stream.
 - **MemGPT / Letta** (Packer et al. 2023, arXiv:2310.08560; sleep-time compute
   arXiv:2504.13171): a compact, **self-rewritten core memory block** kept always
@@ -37,7 +37,7 @@ user/Character relationship, so a reused session id cannot cross relationship da
   watermark, scores importance, and accumulates it in per-relationship state.
 - **Reflection is the autonomous trigger**: when accumulated importance crosses
   `REFLECTION_IMPORTANCE_THRESHOLD`, the Agent runs a reflection pass (salient
-  questions → weighted retrieval → cited insights appended as reflections) and
+  questions → weighted retrieval → cited Reflections appended to Archival Memory) and
   **self-rewrites the Core block** (MemGPT-style), then resets the accumulator.
 
 The hot-path Consolidation Policy enqueues memorable content immediately. Transient
@@ -53,7 +53,7 @@ whether to reflect remains importance- and salience-driven.
 - The Core block gives cross-session "it remembers me" continuity at a small, fixed
   token cost; Reflections let the Character form higher-level views, not just store Observations.
 - Consolidation now makes several LLM calls per reflection (extract, importance,
-  questions, insights, core rewrite, summary). This is deliberately off the hot path;
+  questions, Reflections, Core Memory rewrite, Summary). This is deliberately off the hot path;
   a fast local MoE (e.g. `qwen3:30b-a3b`) or a cheap model suits it. Importance-gating
   keeps reflection infrequent.
 - Similarity-dedup on write depends on embedding quality; a weak embedding model can

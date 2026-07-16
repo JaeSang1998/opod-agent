@@ -29,14 +29,14 @@ export interface ArchivalMemory {
   id: string;
   userId: string;
   characterId: string;
-  /** The remembered fact/insight, phrased as a standalone statement. */
+  /** The remembered Observation or Reflection, phrased as a standalone statement. */
   content: string;
   kind: MemoryKind;
   /** Poignancy 1-10 assigned at creation; drives retrieval + reflection trigger. */
   importance: number;
   /** Embedding of `content`; may be absent in stub retrieval paths. */
   embedding?: number[];
-  /** For reflections: ids of the memories this insight was inferred from. */
+  /** For Reflections: ids of the memories this Reflection was inferred from. */
   evidence?: string[];
   createdAt: string;
   /** Last time this memory was retrieved — the recency signal. */

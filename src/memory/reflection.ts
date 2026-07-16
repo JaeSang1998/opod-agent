@@ -3,15 +3,15 @@ import { completeText } from "./complete-text.js";
 import type { MemoryStore } from "./memory-store.js";
 import type { ArchivalMemory, RelationshipKey } from "./types.js";
 import type { RetrievalWeights } from "./retrieval.js";
-import { parseLines, parseInsights, type ParsedInsight } from "./parsing.js";
+import { parseLines, parseReflections, type ParsedReflection } from "./parsing.js";
 
 export interface ReflectionConfig {
   /** How many recent observations seed the salient-question generation. */
   recentN: number;
   /** Salient questions to generate per reflection pass (GA uses 3). */
   questionsPerPass: number;
-  /** Insights to synthesize per question. */
-  insightsPerQuestion: number;
+  /** Reflections to synthesize per question. */
+  reflectionsPerQuestion: number;
   /** How many memories to retrieve as evidence per question. */
   retrieveTopK: number;
   /** Importance assigned to synthesized reflections (they are high-level). */
@@ -29,7 +29,7 @@ export interface ReflectResult {
 
 /**
  * The autonomous learning pass (docs/adr/0005). Combines Generative Agents'
- * reflection (salient questions → retrieve evidence → synthesize cited insights,
+ * reflection (salient questions → retrieve evidence → synthesize cited Reflections,
  * appended back into the stream) with MemGPT's self-editing core block (rewrite a
  * compact, always-in-context digest of the user). Runs off the chat hot path.
  */
@@ -50,13 +50,18 @@ export class Reflector {
     if (recent.length === 0) return { reflectionsStored: 0, coreUpdated: false };
 
     const questions = await this.salientQuestions(recent, signal);
-    const insights = await this.insightsFor(key, questions, signal);
+    const reflections = await this.reflectionsFor(key, questions, signal);
 
-    const reflectionsStored = await this.storeInsights(key, insights, idempotencyKey, signal);
+    const reflectionsStored = await this.storeReflections(
+      key,
+      reflections,
+      idempotencyKey,
+      signal,
+    );
     const coreUpdated = await this.rewriteCore(
       key,
       recent,
-      insights.map((i) => i.content),
+      reflections.map((reflection) => reflection.content),
       idempotencyKey,
       signal,
     );
@@ -77,55 +82,58 @@ export class Reflector {
     return parseLines(text).slice(0, this.config.questionsPerPass);
   }
 
-  /** Retrieve evidence for each question and synthesize cited insights from it. */
-  private async insightsFor(
+  /** Retrieve evidence for each question and synthesize cited Reflections from it. */
+  private async reflectionsFor(
     key: RelationshipKey,
     questions: string[],
     signal?: AbortSignal,
-  ): Promise<ParsedInsight[]> {
-    const insights: ParsedInsight[] = [];
+  ): Promise<ParsedReflection[]> {
+    const reflections: ParsedReflection[] = [];
     for (const q of questions) {
       const [qEmbedding] = await this.provider.embed([q], { signal });
       const evidence = await this.memory.retrieve(key, qEmbedding ?? [], this.config.retrieveTopK, {
         weights: this.config.weights,
         recencyDecay: this.config.recencyDecay,
       });
-      insights.push(...(await this.synthesize(evidence, signal)));
+      reflections.push(...(await this.synthesize(evidence, signal)));
     }
-    return insights;
+    return reflections;
   }
 
-  /** GA insight_and_evidence: infer cited high-level insights from evidence. */
+  /** Infer cited high-level Reflections from retrieved evidence. */
   private async synthesize(
     evidence: ArchivalMemory[],
     signal?: AbortSignal,
-  ): Promise<ParsedInsight[]> {
+  ): Promise<ParsedReflection[]> {
     if (evidence.length === 0) return [];
     const system =
-      `What ${this.config.insightsPerQuestion} high-level insights can you infer about the ` +
-      "person from the statements below? Format each as: insight (because of 1, 3). " +
-      "The numbers refer to the statements. One insight per line.";
+      `What ${this.config.reflectionsPerQuestion} high-level Reflections can you infer about the ` +
+      "person from the statements below? Format each as: reflection (because of 1, 3). " +
+      "The numbers refer to the statements. One Reflection per line.";
     const numbered = evidence.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
     const text = await completeText(this.provider, system, numbered, signal);
-    return parseInsights(text, evidence).slice(0, this.config.insightsPerQuestion);
+    return parseReflections(text, evidence).slice(0, this.config.reflectionsPerQuestion);
   }
 
-  private async storeInsights(
+  private async storeReflections(
     key: RelationshipKey,
-    insights: ParsedInsight[],
+    reflections: ParsedReflection[],
     idempotencyKey?: string,
     signal?: AbortSignal,
   ): Promise<number> {
-    if (insights.length === 0) return 0;
-    const embeddings = await this.provider.embed(insights.map((i) => i.content), { signal });
+    if (reflections.length === 0) return 0;
+    const embeddings = await this.provider.embed(
+      reflections.map((reflection) => reflection.content),
+      { signal },
+    );
     const rows = await this.memory.upsertMany(
       key,
-      insights.map((ins, i) => ({
-        content: ins.content,
+      reflections.map((reflection, i) => ({
+        content: reflection.content,
         embedding: embeddings[i] ?? [],
         importance: this.config.reflectionImportance,
         kind: "reflection" as const,
-        evidence: ins.evidence,
+        evidence: reflection.evidence,
       })),
       idempotencyKey ? `${idempotencyKey}:reflections` : undefined,
     );
@@ -136,7 +144,7 @@ export class Reflector {
   private async rewriteCore(
     key: RelationshipKey,
     recent: ArchivalMemory[],
-    insights: string[],
+    reflections: string[],
     idempotencyKey?: string,
     signal?: AbortSignal,
   ): Promise<boolean> {
@@ -144,11 +152,11 @@ export class Reflector {
     const system =
       "You maintain compact Core Memory that a Character keeps in mind across conversations. " +
       "Rewrite the Core Memory below, integrating the new material. Keep it under " +
-      `${this.config.coreCharLimit} characters, factual, and free of contradictions — correct ` +
+      `${this.config.coreCharLimit} characters, accurate, and free of contradictions — correct ` +
       "outdated Observations in place. Return only the Core Memory text.";
     const material = [
       ...recent.map((m) => `- ${m.content}`),
-      ...insights.map((i) => `- (insight) ${i}`),
+      ...reflections.map((reflection) => `- (Reflection) ${reflection}`),
     ].join("\n");
     const user = `Current Core Memory:\n${current?.content ?? "(empty)"}\n\nNew material:\n${material}`;
 

@@ -11,9 +11,9 @@ export interface ParsedObservation {
   importance: number;
 }
 
-export interface ParsedInsight {
+export interface ParsedReflection {
   content: string;
-  /** ids of the evidence memories this insight cites. */
+  /** ids of the evidence memories this Reflection cites. */
   evidence: string[];
 }
 
@@ -49,10 +49,10 @@ export function parseObservations(text: string): ParsedObservation[] {
 }
 
 /**
- * Parse "insight (because of 1, 3)" lines, mapping the 1-based statement numbers
+ * Parse "reflection (because of 1, 3)" lines, mapping the 1-based statement numbers
  * to the evidence memories' ids.
  */
-export function parseInsights(text: string, evidence: ArchivalMemory[]): ParsedInsight[] {
+export function parseReflections(text: string, evidence: ArchivalMemory[]): ParsedReflection[] {
   return parseLines(text).map((line) => {
     const match = line.match(/\(([^)]*\d[^)]*)\)\s*$/);
     if (!match) return { content: line, evidence: [] };

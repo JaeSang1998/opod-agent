@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { LLMProvider } from "../provider/llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
 import type { MemoryStore } from "../memory/memory-store.js";
@@ -189,10 +189,22 @@ export class ChatService {
     }
 
     try {
-      const requestId = ctx.requestId ?? randomUUID();
+      const correlationId = ctx.requestId ?? randomUUID();
+      const idempotencyKey = createHash("sha256")
+        .update(
+          JSON.stringify({
+            characterId: ctx.characterId,
+            reason: decision.reason,
+            sessionId: ctx.sessionId,
+            summaryRevision: summary?.revision ?? 0,
+            turns: decision.turns,
+            userId: ctx.userId,
+          }),
+        )
+        .digest("hex");
       await this.queue.enqueueMemoryUpdate({
-        correlationId: requestId,
-        idempotencyKey: requestId,
+        correlationId,
+        idempotencyKey,
         userId: ctx.userId,
         characterId: ctx.characterId,
         sessionId: ctx.sessionId,

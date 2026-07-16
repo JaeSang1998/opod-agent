@@ -58,7 +58,7 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   }
 
   if (memories.length > 0) {
-    // Reflections are higher-level; mark them so the model weighs them as insight.
+    // Reflections are higher-level; mark them so the model applies that context.
     const observations = memories
       .map((m) => (m.kind === "reflection" ? `- (you've come to feel) ${m.content}` : `- ${m.content}`))
       .join("\n");

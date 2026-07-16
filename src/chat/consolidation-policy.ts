@@ -13,7 +13,12 @@ export interface ConsolidationPolicyInput {
 }
 
 export type ConsolidationDecision =
-  | { enqueue: false; reason: "not-needed"; refreshSummary: false; turns: [] }
+  | {
+      enqueue: false;
+      reason: "not-needed" | "unverifiable-gap";
+      refreshSummary: false;
+      turns: [];
+    }
   | { enqueue: true; reason: EnqueueReason; refreshSummary: true; turns: ChatMessage[] };
 
 const ENGLISH_MEMORY_CUE =
@@ -38,12 +43,20 @@ export function decideConsolidation(
   }
 
   // A Summary may describe more turns than a truncated client window contains.
-  // Never treat the latest user/assistant exchange as already covered.
+  // Without absolute turn ids we cannot prove that window contains the complete
+  // uncovered suffix, so reject it instead of persisting a gap.
   const latestExchangeSize = input.assistantContent.trim() ? 2 : 1;
   const maxSafeCovered = Math.max(0, conversation.length - latestExchangeSize);
   const claimedCovered = input.summary?.turnsCovered ?? 0;
-  const covered = claimedCovered > maxSafeCovered ? 0 : claimedCovered;
-  const turns = conversation.slice(covered);
+  if (claimedCovered > maxSafeCovered) {
+    return {
+      enqueue: false,
+      reason: "unverifiable-gap",
+      refreshSummary: false,
+      turns: [],
+    };
+  }
+  const turns = conversation.slice(claimedCovered);
   const latestUser = lastUserText(input.messages) ?? "";
 
   const memorable = ENGLISH_MEMORY_CUE.test(latestUser) || KOREAN_MEMORY_CUE.test(latestUser);

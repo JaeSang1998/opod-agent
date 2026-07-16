@@ -91,10 +91,10 @@ describe("ChatService.prepare", () => {
     await prepared.postTurn("What a great name!");
     expect(queue.enqueued).toHaveLength(1);
     expect(queue.enqueued[0]?.sessionId).toBe("s1");
-    expect(queue.enqueued[0]?.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+    expect(queue.enqueued[0]?.idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("uses the request id as stable consolidation correlation and retry identity", async () => {
+  it("keeps correlation separate from a stable logical-turn retry identity", async () => {
     const { service, queue } = makeService();
     const context = { ...fullCtx, requestId: "chat-request-123" };
 
@@ -104,8 +104,28 @@ describe("ChatService.prepare", () => {
     expect(queue.enqueued).toHaveLength(1);
     expect(queue.enqueued[0]).toMatchObject({
       correlationId: "chat-request-123",
-      idempotencyKey: "chat-request-123",
     });
+    expect(queue.enqueued[0]?.idempotencyKey).not.toBe("chat-request-123");
+  });
+
+  it("does not collapse distinct turns that reuse one correlation id", async () => {
+    const { service, queue } = makeService();
+    const context = { ...fullCtx, requestId: "reused-trace" };
+
+    await (await service.prepare(body, context)).postTurn("What a great name!");
+    await (
+      await service.prepare(
+        { messages: [{ role: "user", content: "My dog is named Max." }] },
+        context,
+      )
+    ).postTurn("Max is a lovely name!");
+
+    expect(queue.enqueued).toHaveLength(2);
+    expect(queue.enqueued.map((job) => job.correlationId)).toEqual([
+      "reused-trace",
+      "reused-trace",
+    ]);
+    expect(new Set(queue.enqueued.map((job) => job.idempotencyKey))).toHaveProperty("size", 2);
   });
 
   it("is a pure pass-through when the client supplies tools", async () => {

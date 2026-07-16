@@ -81,7 +81,7 @@ describe("decideConsolidation", () => {
     ]);
   });
 
-  it("conservatively includes the full caller window when the Summary predates a truncated window", () => {
+  it("rejects a caller window whose uncovered suffix cannot be verified", () => {
     const summary: Summary = {
       userId: "u1",
       characterId: "luna",
@@ -97,9 +97,11 @@ describe("decideConsolidation", () => {
       { role: "user", content: "My new project is Atlas." },
     ];
 
-    expect(decide(messages, "Tell me more.", summary).turns).toEqual([
-      ...messages,
-      { role: "assistant", content: "Tell me more." },
-    ]);
+    expect(decide(messages, "Tell me more.", summary)).toEqual({
+      enqueue: false,
+      reason: "unverifiable-gap",
+      refreshSummary: false,
+      turns: [],
+    });
   });
 });

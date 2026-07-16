@@ -63,10 +63,14 @@ export async function POST(req: Request) {
     execute: async ({ writer }) => {
       let reasoningOpen = false;
       let textOpen = false;
+      let done = false;
 
       try {
         for await (const payload of readSSEData(upstreamBody, req.signal)) {
-          if (payload === "[DONE]") continue;
+          if (payload === "[DONE]") {
+            done = true;
+            break;
+          }
 
           let chunk: {
             error?: { message?: string };
@@ -75,15 +79,11 @@ export async function POST(req: Request) {
           try {
             chunk = JSON.parse(payload);
           } catch {
-            continue; // ignore keep-alives / malformed frames
+            throw new Error("malformed upstream SSE frame");
           }
 
           if (chunk.error) {
-            writer.write({
-              type: "error",
-              errorText: "upstream error",
-            });
-            continue;
+            throw new Error("upstream SSE error frame");
           }
 
           const delta = chunk.choices?.[0]?.delta;
@@ -118,6 +118,7 @@ export async function POST(req: Request) {
             });
           }
         }
+        if (!done) throw new Error("upstream SSE ended before [DONE]");
       } finally {
         if (reasoningOpen) writer.write({ type: "reasoning-end", id: "reasoning" });
         if (textOpen) writer.write({ type: "text-end", id: "text" });
