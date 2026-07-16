@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { lastUserMessage, lastUserText, transcriptOf } from "./messages.js";
-import type { ChatMessage } from "../protocol/chat.js";
+import type { ChatMessage } from "../protocol/index.js";
 
 describe("lastUserMessage", () => {
   it("returns the most recent user message when several are present", () => {

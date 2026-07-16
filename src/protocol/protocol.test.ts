@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChatCompletionRequest } from "./chat.js";
-import { ConsolidationRequest } from "./consolidation.js";
-import { OPOD_HEADERS } from "./headers.js";
+import { ChatCompletionRequest, ConsolidationRequest, OPOD_HEADERS } from "./index.js";
 
 describe("Agent protocol", () => {
   it("keeps the chat body OpenAI-compatible while accepting unknown standard fields", () => {

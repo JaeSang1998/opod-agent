@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../protocol/chat.js";
+import type { ChatMessage } from "../protocol/index.js";
 
 /** A ChatMessage whose content is a plain text string (not multimodal/null). */
 type TextMessage = ChatMessage & { content: string };

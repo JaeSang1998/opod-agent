@@ -1,5 +1,4 @@
-import type { ChatMessage } from "../protocol/chat.js";
-import type { ConsolidationReason as EnqueueReason } from "../protocol/consolidation.js";
+import type { ChatMessage, ConsolidationReason as EnqueueReason } from "../protocol/index.js";
 import type { Summary } from "../memory/types.js";
 import { lastUserText } from "../openai/messages.js";
 

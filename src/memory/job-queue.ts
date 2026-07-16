@@ -1,4 +1,4 @@
-import type { ConsolidationRequest } from "../protocol/consolidation.js";
+import type { ConsolidationRequest } from "../protocol/index.js";
 
 /**
  * Payload for a "memory-update" job. The Agent produces these when it judges

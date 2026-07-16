@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type OpenAI from "openai";
 import type { Container } from "../bootstrap/container.js";
-import { ChatCompletionRequest } from "../protocol/chat.js";
+import { ChatCompletionRequest } from "../protocol/index.js";
 import { getRequestContext } from "../http/context.js";
 import { openaiError } from "../http/errors.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";

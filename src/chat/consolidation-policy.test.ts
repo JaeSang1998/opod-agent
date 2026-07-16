@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ChatMessage } from "../protocol/chat.js";
+import type { ChatMessage } from "../protocol/index.js";
 import type { Summary } from "../memory/types.js";
 import { decideConsolidation } from "./consolidation-policy.js";
 

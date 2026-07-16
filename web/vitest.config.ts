@@ -5,7 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL(".", import.meta.url)),
-      "@opod/protocol": fileURLToPath(new URL("../src/protocol", import.meta.url)),
+      "@opod/protocol": fileURLToPath(new URL("../src/protocol/index.ts", import.meta.url)),
     },
   },
 });

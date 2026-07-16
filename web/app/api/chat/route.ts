@@ -6,7 +6,7 @@ import { fetchOpod } from "@/backend/opod";
 import { PlaygroundChatRequest } from "@/backend/chat-contract";
 import { opodChatHeaders, toOpodChatRequest } from "@/backend/opod-chat-request";
 import { readSSEData } from "@/chat/openai-sse";
-import { OPOD_HEADERS } from "@opod/protocol/headers";
+import { OPOD_HEADERS } from "@opod/protocol";
 
 /** A 30B reasoning model on local hardware is slow — don't cut it off. */
 export const maxDuration = 800;

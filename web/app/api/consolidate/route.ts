@@ -1,6 +1,5 @@
 import { fetchOpod } from "@/backend/opod";
-import { ConsolidationRequest } from "@opod/protocol/consolidation";
-import { OPOD_HEADERS } from "@opod/protocol/headers";
+import { ConsolidationRequest, OPOD_HEADERS } from "@opod/protocol";
 
 /** The sleep-time passes make several LLM calls — slow on a local 30B model. */
 export const maxDuration = 800;

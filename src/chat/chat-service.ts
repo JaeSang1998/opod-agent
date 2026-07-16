@@ -4,7 +4,7 @@ import type { LLMProvider } from "../provider/llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { JobQueue } from "../memory/job-queue.js";
-import type { ChatCompletionRequest, ChatMessage } from "../protocol/chat.js";
+import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
 import { lastUserText } from "../openai/messages.js";
 import type { CoreMemory, LongTermMemory, Summary } from "../memory/types.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";

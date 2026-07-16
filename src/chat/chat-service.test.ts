@@ -7,7 +7,7 @@ import { StubJobQueue } from "../memory/stub-job-queue.js";
 import { FakeProvider } from "../testing/fake-provider.js";
 import { buildDefaultTools } from "../tools/index.js";
 import { noopLogger } from "../bootstrap/logger.js";
-import type { ChatCompletionRequest } from "../protocol/chat.js";
+import type { ChatCompletionRequest } from "../protocol/index.js";
 
 const config = {
   retrieveTopK: 6,

@@ -1,5 +1,4 @@
-import type { ChatCompletionRequest } from "@opod/protocol/chat";
-import { OPOD_HEADERS } from "@opod/protocol/headers";
+import { type ChatCompletionRequest, OPOD_HEADERS } from "@opod/protocol";
 import type { PlaygroundChatRequest } from "./chat-contract";
 
 export function toOpodChatRequest(input: PlaygroundChatRequest): ChatCompletionRequest {

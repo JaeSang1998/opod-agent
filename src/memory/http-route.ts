@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Container } from "../bootstrap/container.js";
-import { ConsolidationRequest } from "../protocol/consolidation.js";
+import { ConsolidationRequest } from "../protocol/index.js";
 import { openaiError } from "../http/errors.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";
 import { isAuthorizedWorker } from "../http/worker-auth.js";

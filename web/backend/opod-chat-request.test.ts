@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChatCompletionRequest } from "@opod/protocol/chat";
-import { OPOD_HEADERS } from "@opod/protocol/headers";
+import { ChatCompletionRequest, OPOD_HEADERS } from "@opod/protocol";
 import { PlaygroundChatRequest } from "./chat-contract";
 import { opodChatHeaders, toOpodChatRequest } from "./opod-chat-request";
 

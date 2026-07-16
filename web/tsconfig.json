@@ -20,7 +20,7 @@
     ],
     "paths": {
       "@/*": ["./*"],
-      "@opod/protocol/*": ["../src/protocol/*"]
+      "@opod/protocol": ["../src/protocol/index.ts"]
     }
   },
   "include": [

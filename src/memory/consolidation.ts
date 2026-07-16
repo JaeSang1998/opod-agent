@@ -1,6 +1,6 @@
 import type { LLMProvider } from "../provider/llm-provider.js";
 import { completeText } from "./complete-text.js";
-import type { ConsolidationRequest } from "../protocol/consolidation.js";
+import type { ConsolidationRequest } from "../protocol/index.js";
 import { transcriptOf } from "../openai/messages.js";
 import type { MemoryStore } from "./memory-store.js";
 import type { LongTermMemory, RelationshipKey, SessionKey, Summary } from "./types.js";

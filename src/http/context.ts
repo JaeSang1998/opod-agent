@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { randomUUID } from "node:crypto";
 import type { ChatContext } from "../chat/chat-service.js";
-import { OPOD_HEADERS } from "../protocol/headers.js";
+import { OPOD_HEADERS } from "../protocol/index.js";
 
 /**
  * The character/user/session a turn belongs to. All fields are optional: when

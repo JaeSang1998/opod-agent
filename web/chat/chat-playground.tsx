@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import type { ConsolidationRequest } from "@opod/protocol/consolidation";
+import type { ConsolidationRequest } from "@opod/protocol";
 import { useEffect, useMemo, useState } from "react";
 import { ChatControls, type ChatSettings } from "./chat-controls";
 import { MessageFeed } from "./message-feed";
