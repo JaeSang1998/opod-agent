@@ -52,6 +52,14 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().optional(),
   OPOD_ADAPTER_MODULE: z.string().min(1).optional(),
   OPOD_WORKER_TOKEN: z.string().min(16).optional(),
+}).superRefine((env, ctx) => {
+  if (env.STORE_DRIVER !== "stub" && !env.OPOD_WORKER_TOKEN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "OPOD_WORKER_TOKEN is required for non-stub persistence",
+      path: ["OPOD_WORKER_TOKEN"],
+    });
+  }
 });
 
 export type Env = z.infer<typeof EnvSchema>;

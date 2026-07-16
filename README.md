@@ -43,8 +43,9 @@ OpenAI-compatible (missing headers ⇒ plain proxy, no persona/memory):
 | Header | Meaning |
 | --- | --- |
 | `X-Opod-Character-Id` | which Persona to load |
-| `X-Opod-User-Id` | whose Long-term Memory (relationship-scoped) |
+| `X-Opod-User-Id` | whose Archival Memory (relationship-scoped) |
 | `X-Opod-Session-Id` | which conversation Summary within that relationship |
+| `X-Opod-Timezone` | optional IANA timezone for time grounding |
 | `X-Request-Id` | optional caller correlation id; generated and echoed when absent |
 
 Supports `stream: true` (OpenAI SSE chunks) and non-streaming JSON. After each turn the Agent
@@ -59,7 +60,7 @@ curl localhost:8787/v1/chat/completions \
 
 ### `POST /memory/consolidate`
 
-Called by `opod-worker`'s **memory-update** job (async). Extracts Long-term Memory and optionally
+Called by `opod-worker`'s **memory-update** job (async). Extracts Archival Memory and optionally
 refreshes the session Summary.
 
 ```json
@@ -86,7 +87,7 @@ cancellation to Provider/tool calls, and returns its correlation id in `X-Reques
 ```
 opod-worker ──HTTP──▶ opod-agent /v1/chat/completions
                           │  1. load published Persona   (PersonaStore)
-                          │  2. retrieve Long-term Memory (MemoryStore + pgvector)
+                          │  2. retrieve Archival Memory (MemoryStore)
                           │  3. + rolling Summary
                           │  4. assemble system prompt
                           │  5. call LLMProvider (OpenAI / Ollama)
@@ -114,6 +115,7 @@ require a second application entrypoint:
 STORE_DRIVER=postgres
 DATABASE_URL=postgres://user:pass@localhost:5432/opod
 OPOD_ADAPTER_MODULE=./deployment/adapters.js
+OPOD_WORKER_TOKEN=replace-with-a-long-random-token
 ```
 
 That module exports a factory. It receives the fully validated environment, including
@@ -156,5 +158,5 @@ request cancellation/correlation, and can point at any opod-agent deployment thr
 | `npm test` | root Vitest suite |
 | `npm run test:coverage` | root suite with enforced 90% line / 80% branch floor |
 | `npm run typecheck:web` | strict Next.js playground typecheck |
-| `npm run test:web` | playground SSE, contract, IME, and submit tests |
+| `npm run test:web` | playground route/SSE/contract/IME tests with enforced coverage floors |
 | `npm run check` | full local quality gate used by CI |

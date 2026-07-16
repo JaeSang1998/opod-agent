@@ -1,6 +1,6 @@
 import type {
   CoreMemory,
-  LongTermMemory,
+  ArchivalMemory,
   MemoryKind,
   RelationshipKey,
   RelationshipState,
@@ -48,10 +48,10 @@ export interface MemoryStore {
     queryEmbedding: number[],
     topK: number,
     opts: RetrieveOptions,
-  ): Promise<LongTermMemory[]>;
+  ): Promise<ArchivalMemory[]>;
 
   /** The most recently created observations (used to seed a reflection pass). */
-  recentObservations(key: RelationshipKey, limit: number): Promise<LongTermMemory[]>;
+  recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]>;
 
   /**
    * Persist a memory batch. When `operationKey` is present, retries return the
@@ -61,7 +61,7 @@ export interface MemoryStore {
     key: RelationshipKey,
     memories: NewMemory[],
     operationKey?: string,
-  ): Promise<LongTermMemory[]>;
+  ): Promise<ArchivalMemory[]>;
 
   /** The MemGPT-style core block for a relationship. */
   getCoreMemory(key: RelationshipKey): Promise<CoreMemory | null>;

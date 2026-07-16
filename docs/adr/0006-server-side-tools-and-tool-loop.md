@@ -27,7 +27,7 @@ must keep working.
 - **Client-supplied `tools` disable the server loop entirely.** When the request body carries its own
   tools, the Agent is a pure pass-through proxy (ADR 0003) and neither injects nor executes anything.
 - **Immersion is enforced in the prompt.** An abilities section tells the character it simply *knows* the
-  time, weather, and facts; it must never mention tools, functions, APIs, or being an AI.
+  time, weather, and real-world information; it must never mention tools, functions, APIs, or being an AI.
 
 ## Considered options
 

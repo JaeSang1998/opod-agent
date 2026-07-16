@@ -14,7 +14,10 @@ describe("buildContainer adapter seam", () => {
     const memory = new StubMemoryStore();
     const queue = new StubJobQueue();
 
-    const container = buildContainer(loadEnv({ STORE_DRIVER: "postgres" }), {
+    const container = buildContainer(loadEnv({
+      OPOD_WORKER_TOKEN: "a-very-long-worker-token",
+      STORE_DRIVER: "postgres",
+    }), {
       provider,
       personas,
       memory,
@@ -30,7 +33,10 @@ describe("buildContainer adapter seam", () => {
 
   it("names the missing adapters for a non-stub store driver", () => {
     expect(() =>
-      buildContainer(loadEnv({ STORE_DRIVER: "postgres" }), {
+      buildContainer(loadEnv({
+        OPOD_WORKER_TOKEN: "a-very-long-worker-token",
+        STORE_DRIVER: "postgres",
+      }), {
         provider: new FakeProvider(),
         log: noopLogger,
       }),

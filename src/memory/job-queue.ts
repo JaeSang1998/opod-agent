@@ -12,5 +12,6 @@ export type MemoryUpdateJob = ConsolidationRequest;
  * the Postgres adapter inserts a row into the shared jobs table.
  */
 export interface JobQueue {
+  /** Re-enqueueing the same idempotency key must not create a second logical job. */
   enqueueMemoryUpdate(job: MemoryUpdateJob): Promise<void>;
 }

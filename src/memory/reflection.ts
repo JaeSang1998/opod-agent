@@ -1,7 +1,7 @@
 import type { LLMProvider } from "../provider/llm-provider.js";
 import { completeText } from "./complete-text.js";
 import type { MemoryStore } from "./memory-store.js";
-import type { LongTermMemory, RelationshipKey } from "./types.js";
+import type { ArchivalMemory, RelationshipKey } from "./types.js";
 import type { RetrievalWeights } from "./retrieval.js";
 import { parseLines, parseInsights, type ParsedInsight } from "./parsing.js";
 
@@ -65,7 +65,7 @@ export class Reflector {
 
   /** GA generate_focal_pt: the most salient high-level questions about the user. */
   private async salientQuestions(
-    recent: LongTermMemory[],
+    recent: ArchivalMemory[],
     signal?: AbortSignal,
   ): Promise<string[]> {
     const system =
@@ -97,7 +97,7 @@ export class Reflector {
 
   /** GA insight_and_evidence: infer cited high-level insights from evidence. */
   private async synthesize(
-    evidence: LongTermMemory[],
+    evidence: ArchivalMemory[],
     signal?: AbortSignal,
   ): Promise<ParsedInsight[]> {
     if (evidence.length === 0) return [];
@@ -135,7 +135,7 @@ export class Reflector {
   /** MemGPT self-edit: rewrite the compact core digest of the user. */
   private async rewriteCore(
     key: RelationshipKey,
-    recent: LongTermMemory[],
+    recent: ArchivalMemory[],
     insights: string[],
     idempotencyKey?: string,
     signal?: AbortSignal,
@@ -145,7 +145,7 @@ export class Reflector {
       "You maintain compact Core Memory that a Character keeps in mind across conversations. " +
       "Rewrite the Core Memory below, integrating the new material. Keep it under " +
       `${this.config.coreCharLimit} characters, factual, and free of contradictions — correct ` +
-      "outdated facts in place. Return only the Core Memory text.";
+      "outdated Observations in place. Return only the Core Memory text.";
     const material = [
       ...recent.map((m) => `- ${m.content}`),
       ...insights.map((i) => `- (insight) ${i}`),

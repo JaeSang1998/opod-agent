@@ -1,9 +1,9 @@
 import type { Persona } from "../persona/persona.js";
-import type { CoreMemory, LongTermMemory, Summary } from "../memory/types.js";
+import type { ArchivalMemory, CoreMemory, Summary } from "../memory/types.js";
 
 export interface PromptInputs {
   persona: Persona;
-  memories: LongTermMemory[];
+  memories: ArchivalMemory[];
   /** MemGPT-style compact digest of the user, always kept in mind. */
   core: CoreMemory | null;
   summary: Summary | null;
@@ -59,10 +59,10 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
 
   if (memories.length > 0) {
     // Reflections are higher-level; mark them so the model weighs them as insight.
-    const facts = memories
+    const observations = memories
       .map((m) => (m.kind === "reflection" ? `- (you've come to feel) ${m.content}` : `- ${m.content}`))
       .join("\n");
-    sections.push(`# Things you recall\n${facts}`);
+    sections.push(`# Things you recall\n${observations}`);
   }
 
   if (toolsEnabled) sections.push(buildAbilitiesSection(toolNames));
@@ -130,7 +130,7 @@ function buildAbilitiesSection(toolNames?: string[]): string {
   const abilities = toolNames
     ? toolNames.map((n) => ABILITY_BY_TOOL[n]).filter((a): a is string => Boolean(a))
     : DEFAULT_ABILITIES;
-  const list = abilities.length > 0 ? abilities.join(", ") : "some real-world facts";
+  const list = abilities.length > 0 ? abilities.join(", ") : "some real-world information";
 
   return [
     "# Your abilities (stay in character)",

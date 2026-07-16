@@ -2,8 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport, type UIMessage } from "ai";
-import type { ConsolidationRequest } from "@opod/protocol";
+import { DefaultChatTransport } from "ai";
 import { useEffect, useMemo, useState } from "react";
 import { ChatControls, type ChatSettings } from "./chat-controls";
 import { MessageFeed } from "./message-feed";
@@ -16,6 +15,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "./prompt-input";
+import { useConsolidation } from "./use-consolidation";
 
 const DEFAULT_SETTINGS: ChatSettings = {
   characterId: "luna",
@@ -25,28 +25,8 @@ const DEFAULT_SETTINGS: ChatSettings = {
   temperature: "0.7",
 };
 
-interface ConsolidationState {
-  busy: boolean;
-  text: string;
-  error?: boolean;
-}
-
-function textTurnsOf(messages: UIMessage[]) {
-  return messages.flatMap((message) => {
-    const content = message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("");
-    return content ? [{ role: message.role, content }] : [];
-  });
-}
-
 export function ChatPlayground() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [consolidation, setConsolidation] = useState<ConsolidationState>({
-    busy: false,
-    text: "",
-  });
 
   useEffect(() => {
     setSettings((current) => ({ ...current, sessionId: crypto.randomUUID() }));
@@ -54,6 +34,11 @@ export function ChatPlayground() {
 
   const transport = useMemo(() => new DefaultChatTransport({ api: "/api/chat" }), []);
   const { error, messages, sendMessage, setMessages, status } = useChat({ transport });
+  const {
+    consolidate,
+    reset: resetConsolidation,
+    state: consolidation,
+  } = useConsolidation(messages, settings);
   const busy = status === "submitted" || status === "streaming";
 
   const updateSetting = <K extends keyof ChatSettings>(key: K, value: ChatSettings[K]) => {
@@ -76,51 +61,10 @@ export function ChatPlayground() {
     );
   };
 
-  const consolidate = async () => {
-    const turns = textTurnsOf(messages);
-    const { characterId, sessionId, userId } = settings;
-    if (!characterId || !userId || !sessionId || turns.length === 0) {
-      setConsolidation({
-        busy: false,
-        error: true,
-        text: "need character + user + session and at least one turn",
-      });
-      return;
-    }
-
-    setConsolidation({ busy: true, text: "consolidating…" });
-    try {
-      const body = {
-          characterId,
-          correlationId: crypto.randomUUID(),
-          idempotencyKey: crypto.randomUUID(),
-          reason: "manual",
-          refreshSummary: true,
-          sessionId,
-          turns,
-          userId,
-        } satisfies ConsolidationRequest;
-      const response = await fetch("/api/consolidate", {
-        body: JSON.stringify(body),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error?.message ?? `HTTP ${response.status}`);
-      setConsolidation({ busy: false, text: JSON.stringify(data) });
-    } catch (cause) {
-      setConsolidation({
-        busy: false,
-        error: true,
-        text: cause instanceof Error ? cause.message : String(cause),
-      });
-    }
-  };
-
   const newSession = () => {
     updateSetting("sessionId", crypto.randomUUID());
     setMessages([]);
-    setConsolidation({ busy: false, text: "" });
+    resetConsolidation();
   };
 
   return (

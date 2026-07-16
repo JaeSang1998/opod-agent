@@ -1,4 +1,4 @@
-import type { LongTermMemory } from "./types.js";
+import type { ArchivalMemory } from "./types.js";
 
 /**
  * Tolerant parsers for the sleep-time passes' free-text LLM replies. The models
@@ -52,7 +52,7 @@ export function parseObservations(text: string): ParsedObservation[] {
  * Parse "insight (because of 1, 3)" lines, mapping the 1-based statement numbers
  * to the evidence memories' ids.
  */
-export function parseInsights(text: string, evidence: LongTermMemory[]): ParsedInsight[] {
+export function parseInsights(text: string, evidence: ArchivalMemory[]): ParsedInsight[] {
   return parseLines(text).map((line) => {
     const match = line.match(/\(([^)]*\d[^)]*)\)\s*$/);
     if (!match) return { content: line, evidence: [] };

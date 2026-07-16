@@ -61,7 +61,7 @@ src/
 5. **Prompt assembly** — `chat/system-prompt.ts` (persona-only first).
 6. **Chat (non-stream)** — `chat-service` wires persona + provider; `POST /v1/chat/completions` returns
    OpenAI JSON; no headers ⇒ plain proxy (graceful degrade). *End-to-end milestone.*
-7. **Memory retrieval** — `MemoryStore` + `StubMemoryStore`; inject long-term memory + summary into prompt.
+7. **Memory retrieval** — `MemoryStore` + `StubMemoryStore`; inject Archival Memory + Summary into prompt.
 8. **Streaming** — honor `stream:true` with OpenAI SSE chunks.
 9. **Consolidation** — a domain policy enqueues memorable or Summary-stale uncovered turns;
    `consolidation.ts` performs staged, retry-safe learning off the hot path through `JobQueue`.

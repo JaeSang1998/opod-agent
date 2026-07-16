@@ -8,7 +8,7 @@
  *
  * Tiers:
  *  - Short-term: recent turns, passed in by the caller — not stored here.
- *  - Archival:   LongTermMemory (observations + reflections) in pgvector, keyed
+ *  - Archival:   ArchivalMemory (Observations + Reflections), keyed
  *                by the (user, character) relationship, importance-weighted.
  *  - Core:       CoreMemory — a small always-injected relationship digest.
  *  - Summary:    a rolling episodic compression, keyed by session.
@@ -25,7 +25,7 @@ export interface SessionKey extends RelationshipKey {
   sessionId: string;
 }
 
-export interface LongTermMemory {
+export interface ArchivalMemory {
   id: string;
   userId: string;
   characterId: string;

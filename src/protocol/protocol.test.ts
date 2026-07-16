@@ -10,6 +10,19 @@ describe("Agent protocol", () => {
     expect(parsed.response_format).toEqual({ type: "json_object" });
   });
 
+  it("accepts nullable OpenAI options and the legacy function message role", () => {
+    expect(
+      ChatCompletionRequest.parse({
+        max_tokens: null,
+        messages: [{ role: "function", content: null, name: "lookup" }],
+        stop: null,
+        stream: null,
+        temperature: null,
+        top_p: null,
+      }),
+    ).toMatchObject({ stop: null, stream: null, temperature: null, top_p: null });
+  });
+
   it("requires retry identity, correlation, and policy reason for Consolidation", () => {
     const base = {
       characterId: "luna",

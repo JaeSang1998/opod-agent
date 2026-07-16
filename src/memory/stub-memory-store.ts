@@ -7,7 +7,7 @@ import type {
 } from "./memory-store.js";
 import type {
   CoreMemory,
-  LongTermMemory,
+  ArchivalMemory,
   RelationshipKey,
   RelationshipState,
   SessionKey,
@@ -35,12 +35,12 @@ function operationKey(k: RelationshipKey, operation: string): string {
  * stand-in until the Postgres + pgvector adapter lands (docs/adr/0002, 0005).
  */
 export class StubMemoryStore implements MemoryStore {
-  private readonly memories = new Map<string, LongTermMemory[]>();
+  private readonly memories = new Map<string, ArchivalMemory[]>();
   private readonly cores = new Map<string, CoreMemory>();
   private readonly states = new Map<string, RelationshipState>();
   private readonly summaries = new Map<string, Summary>();
   private readonly summaryOperations = new Map<string, Set<string>>();
-  private readonly memoryOperations = new Map<string, LongTermMemory[]>();
+  private readonly memoryOperations = new Map<string, ArchivalMemory[]>();
   private readonly importanceOperations = new Set<string>();
   private readonly coreOperations = new Set<string>();
   private seq = 0;
@@ -55,7 +55,7 @@ export class StubMemoryStore implements MemoryStore {
     queryEmbedding: number[],
     topK: number,
     opts: RetrieveOptions,
-  ): Promise<LongTermMemory[]> {
+  ): Promise<ArchivalMemory[]> {
     const all = this.memories.get(relKey(key)) ?? [];
     const ranked = rankByRetrievalScore(all, queryEmbedding, {
       weights: opts.weights,
@@ -68,7 +68,7 @@ export class StubMemoryStore implements MemoryStore {
     return structuredClone(ranked);
   }
 
-  async recentObservations(key: RelationshipKey, limit: number): Promise<LongTermMemory[]> {
+  async recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]> {
     const all = this.memories.get(relKey(key)) ?? [];
     return structuredClone(
       all
@@ -82,19 +82,19 @@ export class StubMemoryStore implements MemoryStore {
     key: RelationshipKey,
     incoming: NewMemory[],
     operation?: string,
-  ): Promise<LongTermMemory[]> {
+  ): Promise<ArchivalMemory[]> {
     const operationId = operation ? operationKey(key, operation) : null;
     const previous = operationId ? this.memoryOperations.get(operationId) : undefined;
     if (previous) return structuredClone(previous);
 
     const list = this.memories.get(relKey(key)) ?? [];
-    const stored: LongTermMemory[] = [];
+    const stored: ArchivalMemory[] = [];
     const at = this.now();
     for (const mem of incoming) {
-      // Similarity dedup: skip facts too close to an existing one.
+      // Similarity dedup: skip Observations too close to an existing item.
       const dup = list.some((m) => cosineSimilarity(m.embedding ?? [], mem.embedding) > 0.95);
       if (dup) continue;
-      const row: LongTermMemory = {
+      const row: ArchivalMemory = {
         id: `mem_${++this.seq}`,
         userId: key.userId,
         characterId: key.characterId,

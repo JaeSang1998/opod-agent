@@ -2,7 +2,7 @@
 
 ## Context
 
-Extracting Long-term Memory and refreshing the Summary are extra LLM calls that must not delay the chat
+Extracting Archival Memory and refreshing the Summary are extra LLM calls that must not delay the chat
 reply. The open question was who decides *when* they run — an external scheduler (e.g. the worker firing
 a job every turn / every N turns) or the Agent itself. We want the Agent to own that judgment, but we
 also want the durability the existing Postgres job queue already provides (row-locking, retries).

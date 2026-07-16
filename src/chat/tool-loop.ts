@@ -1,6 +1,14 @@
 import type OpenAI from "openai";
 import type { LLMProvider } from "../provider/llm-provider.js";
 import { type AgentTool, type ToolContext, executeToolCall } from "../tools/index.js";
+import {
+  assembleToolCall,
+  createClientChunkFilter,
+  emptyCompletion,
+  reasoningOf,
+  stopChunk,
+  toStopCompletion,
+} from "./tool-loop-wire.js";
 
 /**
  * A transport-agnostic observation of the loop's tool activity, surfaced only when
@@ -27,8 +35,6 @@ const RESULT_PREVIEW = 200;
 
 type Message = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;
-type Delta = OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta;
-type DeltaToolCall = OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta.ToolCall;
 
 /**
  * Server-side tool loop (non-streaming). Repeatedly asks the provider for a reply;
@@ -97,32 +103,7 @@ export async function* runToolLoopStream(
   const messages: Message[] = [...(request.messages as Message[])];
   const toolResults = new Map<string, Promise<string>>();
 
-  // Tracks whether a role delta has already been sent to the client. Each text
-  // turn opens with its own role delta; only the first may reach the client, so a
-  // mixed turn followed by a text turn does not emit two role deltas.
-  let roleSent = false;
-  const forClient = (
-    chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
-  ): OpenAI.Chat.Completions.ChatCompletionChunk | null => {
-    const choice = chunk.choices[0];
-    const delta = choice?.delta;
-    if (!delta?.role) return chunk;
-    if (!roleSent) {
-      roleSent = true;
-      return chunk;
-    }
-    // Role already emitted: strip it; drop the chunk entirely if nothing remains.
-    // "reasoning" is counted alongside content/tool_calls/finish so a role-stripped
-    // reasoning fragment (gemma streams role on every chunk) is not dropped.
-    const { role: _role, ...rest } = delta;
-    const hasMore =
-      rest.content != null ||
-      rest.tool_calls != null ||
-      reasoningOf(rest) !== "" ||
-      choice?.finish_reason != null;
-    if (!hasMore) return null;
-    return { ...chunk, choices: [{ ...choice, delta: rest }] } as typeof chunk;
-  };
+  const forClient = createClientChunkFilter();
 
   for (let i = 0; i < maxIterations; i++) {
     const stream = await provider.chatStream(
@@ -153,7 +134,7 @@ export async function* runToolLoopStream(
       const fragments = delta?.tool_calls;
       if (fragments && fragments.length > 0) {
         isToolTurn = true;
-        for (const frag of fragments) assemble(acc, frag);
+        for (const frag of fragments) assembleToolCall(acc, frag);
         continue; // never emit a chunk carrying tool_calls
       }
       if (finishReason === "tool_calls") isToolTurn = true;
@@ -260,70 +241,4 @@ function emit(onEvent: ((event: ToolLoopEvent) => void) | undefined, event: Tool
   } catch {
     // A throwing listener must never affect the model reply.
   }
-}
-
-/** Reads the nonstandard `reasoning` string some local models (e.g. gemma) stream
- *  as a delta field; "" when absent. Typed narrowing keeps the access tidy. */
-function reasoningOf(delta: Delta | undefined): string {
-  const value = (delta as Record<string, unknown> | undefined)?.reasoning;
-  return typeof value === "string" ? value : "";
-}
-
-/** Rewrites an exhausted completion into a tool-call-free "stop" turn, keeping any
- *  partial text the model produced on the final turn. */
-function toStopCompletion(
-  completion: OpenAI.Chat.Completions.ChatCompletion,
-): OpenAI.Chat.Completions.ChatCompletion {
-  const choice = completion.choices[0];
-  const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
-  return {
-    ...completion,
-    choices: [
-      {
-        index: choice?.index ?? 0,
-        logprobs: choice?.logprobs ?? null,
-        finish_reason: "stop",
-        message: { role: "assistant", content, refusal: choice?.message?.refusal ?? null },
-      },
-    ],
-  };
-}
-
-/** A minimal, well-formed empty "stop" completion (defensive: maxIterations <= 0). */
-function emptyCompletion(model: string): OpenAI.Chat.Completions.ChatCompletion {
-  return {
-    id: "chatcmpl-tool-loop",
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [
-      {
-        index: 0,
-        logprobs: null,
-        finish_reason: "stop",
-        message: { role: "assistant", content: "", refusal: null },
-      },
-    ],
-  } as OpenAI.Chat.Completions.ChatCompletion;
-}
-
-/** A single well-formed empty "stop" chunk to close an exhausted stream. */
-function stopChunk(model: string): OpenAI.Chat.Completions.ChatCompletionChunk {
-  return {
-    id: "chatcmpl-tool-loop",
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: "stop" }],
-  };
-}
-
-/** Merges one streamed tool_call fragment into the accumulator, indexed by
- *  fragment.index; argument slices concatenate. */
-function assemble(acc: ToolCall[], frag: DeltaToolCall): void {
-  const at = acc[frag.index] ?? { id: "", type: "function", function: { name: "", arguments: "" } };
-  if (frag.id) at.id = frag.id;
-  if (frag.function?.name) at.function.name = frag.function.name;
-  if (frag.function?.arguments) at.function.arguments += frag.function.arguments;
-  acc[frag.index] = at;
 }

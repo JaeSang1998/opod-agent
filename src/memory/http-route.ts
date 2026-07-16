@@ -2,12 +2,13 @@ import { Hono } from "hono";
 import type { Container } from "../bootstrap/container.js";
 import { ConsolidationRequest } from "../protocol/index.js";
 import { openaiError } from "../http/errors.js";
+import { getRequestContext } from "../http/context.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";
 import { isAuthorizedWorker } from "../http/worker-auth.js";
 
 /**
  * POST /memory/consolidate — invoked by opod-worker's memory-update job
- * (docs/adr/0004). Extracts long-term memory and optionally refreshes the summary.
+ * (docs/adr/0004). Extracts Archival Memory and optionally refreshes the Summary.
  */
 export function consolidateRoute(container: Container): Hono {
   const app = new Hono();
@@ -21,6 +22,7 @@ export function consolidateRoute(container: Container): Hono {
     if (!parsed.success) {
       return c.json(openaiError("invalid_request_error", parsed.error.message), 400);
     }
+    getRequestContext(c).requestId = parsed.data.correlationId;
 
     try {
       const signal = createRequestSignal(c.req.raw.signal, container.env.LLM_REQUEST_TIMEOUT_MS);

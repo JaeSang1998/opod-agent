@@ -62,6 +62,7 @@ describe("POST /memory/consolidate", () => {
     const json = (await res.json()) as { ok: boolean; observationsStored: number };
     expect(json.ok).toBe(true);
     expect(json.observationsStored).toBe(1);
+    expect(res.headers.get("x-request-id")).toBe("request-http-valid");
 
     const stored = await memory.retrieve({ userId: "u1", characterId: "luna" }, [1, 2, 3, 4], 5, {
       weights,

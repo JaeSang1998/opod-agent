@@ -3,7 +3,7 @@ import { completeText } from "./complete-text.js";
 import type { ConsolidationRequest } from "../protocol/index.js";
 import { transcriptOf } from "../openai/messages.js";
 import type { MemoryStore } from "./memory-store.js";
-import type { LongTermMemory, RelationshipKey, SessionKey, Summary } from "./types.js";
+import type { ArchivalMemory, RelationshipKey, SessionKey, Summary } from "./types.js";
 import type { Reflector } from "./reflection.js";
 import { parseObservations, type ParsedObservation } from "./parsing.js";
 
@@ -54,7 +54,7 @@ async function atStage<T>(
 }
 
 const EXTRACT_SYSTEM =
-  "Extract durable facts worth remembering about the USER from this conversation " +
+  "Extract durable Observations worth remembering about the USER from this conversation " +
   "(preferences, personal details, relationships, ongoing situations). Ignore the " +
   "assistant's own lines. For each, rate its importance on a scale of 1 (mundane) to " +
   "10 (deeply significant). Return a JSON array of objects {\"content\": string, " +
@@ -147,7 +147,7 @@ export class ConsolidationService {
     observations: ParsedObservation[],
     idempotencyKey: string,
     signal?: AbortSignal,
-  ): Promise<LongTermMemory[]> {
+  ): Promise<ArchivalMemory[]> {
     if (observations.length === 0) return [];
     const embeddings = await this.provider.embed(observations.map((o) => o.content), { signal });
     return this.memory.upsertMany(

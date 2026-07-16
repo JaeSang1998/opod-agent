@@ -23,15 +23,26 @@ export async function POST(req: Request) {
     headers.Authorization = `Bearer ${process.env.OPOD_WORKER_TOKEN}`;
   }
 
-  const res = await fetchOpod("/memory/consolidate", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(parsed.data),
-    signal: req.signal,
-  });
+  let res: Response;
+  try {
+    res = await fetchOpod("/memory/consolidate", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(parsed.data),
+      signal: req.signal,
+    });
+  } catch {
+    return new Response("opod-agent unavailable", {
+      headers: { [OPOD_HEADERS.requestId]: parsed.data.correlationId },
+      status: 502,
+    });
+  }
 
   return new Response(await res.text(), {
     status: res.status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      [OPOD_HEADERS.requestId]: parsed.data.correlationId,
+    },
   });
 }

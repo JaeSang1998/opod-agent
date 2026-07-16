@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** OpenAI Chat Completions wire contract. OPOD context always rides in headers. */
-const ChatRole = z.enum(["system", "user", "assistant", "tool", "developer"]);
+const ChatRole = z.enum(["system", "user", "assistant", "tool", "developer", "function"]);
 
 export const ChatMessage = z
   .object({
@@ -16,11 +16,11 @@ export const ChatCompletionRequest = z
   .object({
     model: z.string().optional(),
     messages: z.array(ChatMessage).min(1),
-    stream: z.boolean().optional(),
-    temperature: z.number().optional(),
-    top_p: z.number().optional(),
-    max_tokens: z.number().int().positive().optional(),
-    stop: z.union([z.string(), z.array(z.string())]).optional(),
+    stream: z.boolean().nullable().optional(),
+    temperature: z.number().nullable().optional(),
+    top_p: z.number().nullable().optional(),
+    max_tokens: z.number().int().positive().nullable().optional(),
+    stop: z.union([z.string(), z.array(z.string())]).nullable().optional(),
   })
   .passthrough();
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequest>;

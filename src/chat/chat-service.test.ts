@@ -94,6 +94,35 @@ describe("ChatService.prepare", () => {
     expect(queue.enqueued[0]?.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it("uses the request id as stable consolidation correlation and retry identity", async () => {
+    const { service, queue } = makeService();
+    const context = { ...fullCtx, requestId: "chat-request-123" };
+
+    await (await service.prepare(body, context)).postTurn("What a great name!");
+    await (await service.prepare(body, context)).postTurn("What a great name!");
+
+    expect(queue.enqueued).toHaveLength(1);
+    expect(queue.enqueued[0]).toMatchObject({
+      correlationId: "chat-request-123",
+      idempotencyKey: "chat-request-123",
+    });
+  });
+
+  it("is a pure pass-through when the client supplies tools", async () => {
+    const { service, queue } = makeService();
+    const request = {
+      ...body,
+      tools: [{ type: "function", function: { name: "client_tool", parameters: {} } }],
+    } as ChatCompletionRequest;
+
+    const prepared = await service.prepare(request, fullCtx);
+    await prepared.postTurn("client-managed result");
+
+    expect(prepared.request.messages[0]?.role).toBe("user");
+    expect(prepared.tools).toBeUndefined();
+    expect(queue.enqueued).toHaveLength(0);
+  });
+
   it("does not enqueue when identity is incomplete", async () => {
     const { service, queue } = makeService();
     const prepared = await service.prepare(body, { characterId: "luna" });

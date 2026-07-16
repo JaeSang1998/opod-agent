@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run chat backend",
+    "test": "vitest run chat backend app/api",
+    "test:coverage": "vitest run chat backend app/api --coverage",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters"
   },
   "dependencies": {
@@ -38,6 +39,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^2.1.9",
     "jsdom": "^29.1.1",
     "shadcn": "^4.13.0",
     "tailwindcss": "^4",

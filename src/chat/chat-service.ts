@@ -6,7 +6,7 @@ import type { MemoryStore } from "../memory/memory-store.js";
 import type { JobQueue } from "../memory/job-queue.js";
 import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
 import { lastUserText } from "../openai/messages.js";
-import type { CoreMemory, LongTermMemory, Summary } from "../memory/types.js";
+import type { ArchivalMemory, CoreMemory, Summary } from "../memory/types.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";
 import { type Logger, noopLogger } from "../bootstrap/logger.js";
 import type { AgentTool } from "../tools/index.js";
@@ -62,6 +62,16 @@ export class ChatService {
   ): Promise<PreparedTurn> {
     const model = body.model ?? this.provider.defaultModel;
     const messages = body.messages as ChatMessage[];
+    const clientSuppliedTools = (body as Record<string, unknown>).tools != null;
+
+    // A caller that supplies OpenAI tools owns the full tool protocol. Do not
+    // inject Persona/Memory, execute server tools, or learn from that exchange.
+    if (clientSuppliedTools) {
+      return {
+        request: { ...body, model, stream: undefined } as PreparedTurn["request"],
+        postTurn: async () => {},
+      };
+    }
 
     // No character → plain OpenAI-compatible proxy (docs/adr/0003).
     const persona = ctx.characterId
@@ -87,8 +97,7 @@ export class ChatService {
 
     // Client-supplied tools mean pure passthrough (docs/adr/0003): the server tool
     // loop only runs for persona turns whose body carries no tools of its own.
-    const clientSuppliedTools = (body as Record<string, unknown>).tools != null;
-    const serverToolsActive = this.tools.length > 0 && !clientSuppliedTools;
+    const serverToolsActive = this.tools.length > 0;
 
     const systemPrompt = assembleSystemPrompt({
       persona,
@@ -119,7 +128,7 @@ export class ChatService {
     ctx: ChatContext,
     query: string | null,
     signal?: AbortSignal,
-  ): Promise<LongTermMemory[]> {
+  ): Promise<ArchivalMemory[]> {
     if (!ctx.userId || !ctx.characterId || !query) return [];
     try {
       const [embedding] = await this.provider.embed([query], { signal });
@@ -180,9 +189,10 @@ export class ChatService {
     }
 
     try {
+      const requestId = ctx.requestId ?? randomUUID();
       await this.queue.enqueueMemoryUpdate({
-        correlationId: ctx.requestId ?? randomUUID(),
-        idempotencyKey: randomUUID(),
+        correlationId: requestId,
+        idempotencyKey: requestId,
         userId: ctx.userId,
         characterId: ctx.characterId,
         sessionId: ctx.sessionId,

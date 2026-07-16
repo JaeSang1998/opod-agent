@@ -51,10 +51,10 @@ whether to reflect remains importance- and salience-driven.
 - Honors the "the agent decides autonomously" intent with a mechanism grounded in
   published work, not an ad-hoc rule.
 - The Core block gives cross-session "it remembers me" continuity at a small, fixed
-  token cost; reflections let the character form higher-level views, not just store facts.
+  token cost; Reflections let the Character form higher-level views, not just store Observations.
 - Consolidation now makes several LLM calls per reflection (extract, importance,
   questions, insights, core rewrite, summary). This is deliberately off the hot path;
   a fast local MoE (e.g. `qwen3:30b-a3b`) or a cheap model suits it. Importance-gating
   keeps reflection infrequent.
 - Similarity-dedup on write depends on embedding quality; a weak embedding model can
-  over-merge distinct facts (observed with crude test embeddings).
+  over-merge distinct Observations (observed with crude test embeddings).

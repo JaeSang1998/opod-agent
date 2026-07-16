@@ -41,7 +41,8 @@ export function decideConsolidation(
   // Never treat the latest user/assistant exchange as already covered.
   const latestExchangeSize = input.assistantContent.trim() ? 2 : 1;
   const maxSafeCovered = Math.max(0, conversation.length - latestExchangeSize);
-  const covered = Math.min(input.summary?.turnsCovered ?? 0, maxSafeCovered);
+  const claimedCovered = input.summary?.turnsCovered ?? 0;
+  const covered = claimedCovered > maxSafeCovered ? 0 : claimedCovered;
   const turns = conversation.slice(covered);
   const latestUser = lastUserText(input.messages) ?? "";
 

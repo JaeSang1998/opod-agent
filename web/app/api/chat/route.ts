@@ -36,16 +36,24 @@ export async function POST(req: Request) {
   const headers = opodChatHeaders(parsed.data, requestId);
   const body = toOpodChatRequest(parsed.data);
 
-  const upstream = await fetchOpod("/v1/chat/completions", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetchOpod("/v1/chat/completions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: req.signal,
+    });
+  } catch {
+    return new Response("opod-agent unavailable", {
+      headers: { [OPOD_HEADERS.requestId]: requestId },
+      status: 502,
+    });
+  }
 
   if (!upstream.ok || !upstream.body) {
-    const detail = await upstream.text().catch(() => "");
-    return new Response(`opod-agent error ${upstream.status}: ${detail}`, {
+    return new Response(`opod-agent error ${upstream.status}`, {
+      headers: { [OPOD_HEADERS.requestId]: requestId },
       status: 502,
     });
   }
@@ -73,7 +81,7 @@ export async function POST(req: Request) {
           if (chunk.error) {
             writer.write({
               type: "error",
-              errorText: chunk.error.message ?? "upstream error",
+              errorText: "upstream error",
             });
             continue;
           }
@@ -115,7 +123,7 @@ export async function POST(req: Request) {
         if (textOpen) writer.write({ type: "text-end", id: "text" });
       }
     },
-    onError: (error) => (error instanceof Error ? error.message : String(error)),
+    onError: () => "stream failed",
   });
 
   const response = createUIMessageStreamResponse({ stream });

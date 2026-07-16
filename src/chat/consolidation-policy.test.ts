@@ -80,4 +80,26 @@ describe("decideConsolidation", () => {
       { role: "assistant", content: "Lovely." },
     ]);
   });
+
+  it("conservatively includes the full caller window when the Summary predates a truncated window", () => {
+    const summary: Summary = {
+      userId: "u1",
+      characterId: "luna",
+      sessionId: "s1",
+      content: "A much longer earlier conversation.",
+      turnsCovered: 100,
+      revision: 2,
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const messages: ChatMessage[] = [
+      { role: "user", content: "Earlier retained turn" },
+      { role: "assistant", content: "Earlier retained reply" },
+      { role: "user", content: "My new project is Atlas." },
+    ];
+
+    expect(decide(messages, "Tell me more.", summary).turns).toEqual([
+      ...messages,
+      { role: "assistant", content: "Tell me more." },
+    ]);
+  });
 });

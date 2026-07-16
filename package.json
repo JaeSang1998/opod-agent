@@ -20,7 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:web": "pnpm --dir web test",
+    "test:web": "pnpm --dir web test:coverage",
     "typecheck:web": "pnpm --dir web typecheck",
     "test:watch": "vitest"
   },

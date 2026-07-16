@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type OpenAI from "openai";
 import { parseLines, parseInsights } from "./parsing.js";
-import type { LongTermMemory } from "./types.js";
+import type { ArchivalMemory } from "./types.js";
 import { Reflector, type ReflectionConfig } from "./reflection.js";
 import { StubMemoryStore } from "./stub-memory-store.js";
 import type { LLMProvider } from "../provider/llm-provider.js";
 import type { RelationshipKey } from "./memory-store.js";
 
-function obs(id: string, content: string): LongTermMemory {
+function obs(id: string, content: string): ArchivalMemory {
   return { id, userId: "u", characterId: "c", content, kind: "observation", importance: 5, createdAt: "", lastAccessedAt: "" };
 }
 

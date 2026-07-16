@@ -22,7 +22,7 @@ export interface LLMProvider {
     options?: ProviderCallOptions,
   ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>>;
 
-  /** Embed one or more texts (used for long-term memory read + write). */
+  /** Embed one or more texts (used for Archival Memory read + write). */
   embed(texts: string[], options?: ProviderCallOptions): Promise<number[][]>;
 
   /** The default model id, used when a request omits `model`. */

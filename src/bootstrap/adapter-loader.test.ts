@@ -23,6 +23,7 @@ describe("loadAdapterOverrides", () => {
       STORE_DRIVER: "postgres",
       DATABASE_URL: "postgres://db/opod",
       OPOD_ADAPTER_MODULE: "@opod/postgres-adapters",
+      OPOD_WORKER_TOKEN: "a-very-long-worker-token",
     });
 
     const overrides = await loadAdapterOverrides(env, importer);
