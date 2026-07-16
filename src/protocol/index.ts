@@ -42,6 +42,7 @@ export type ConsolidationRequest = z.infer<typeof ConsolidationRequest>;
 
 export const OPOD_HEADERS = {
   characterId: "x-opod-character-id",
+  debug: "x-opod-debug",
   historyOffset: "x-opod-history-offset",
   requestId: "x-request-id",
   sessionId: "x-opod-session-id",

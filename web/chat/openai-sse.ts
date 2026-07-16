@@ -14,11 +14,22 @@ function dataOf(event: string): string | null {
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-/** Parse SSE data fields across arbitrary chunks, CRLF frames, and a final unterminated event. */
-export async function* readSSEData(
+function eventNameOf(block: string): string | null {
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) return line.slice(6).trimStart();
+  }
+  return null;
+}
+
+/**
+ * Parse SSE blocks — event name plus joined data — across arbitrary chunks,
+ * CRLF frames, and a final unterminated event. opod-agent interleaves
+ * "event: opod" debug frames between OpenAI data-only chunks (docs/adr/0006).
+ */
+export async function* readSSEEvents(
   stream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+): AsyncGenerator<{ event: string | null; data: string }> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -35,16 +46,16 @@ export async function* readSSEData(
 
       let separator = separatorIndex(buffer);
       while (separator) {
-        const event = buffer.slice(0, separator.index);
+        const block = buffer.slice(0, separator.index);
         buffer = buffer.slice(separator.index + separator.length);
-        const data = dataOf(event);
-        if (data !== null) yield data;
+        const data = dataOf(block);
+        if (data !== null) yield { event: eventNameOf(block), data };
         separator = separatorIndex(buffer);
       }
 
       if (done) {
         const data = dataOf(buffer);
-        if (data !== null) yield data;
+        if (data !== null) yield { event: eventNameOf(buffer), data };
         return;
       }
     }
@@ -52,4 +63,12 @@ export async function* readSSEData(
     signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
+}
+
+/** Parse SSE data fields across arbitrary chunks, CRLF frames, and a final unterminated event. */
+export async function* readSSEData(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  for await (const frame of readSSEEvents(stream, signal)) yield frame.data;
 }

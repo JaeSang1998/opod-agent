@@ -48,6 +48,7 @@ OpenAI-compatible (missing headers ⇒ plain proxy, no persona/memory):
 | `X-Opod-Turn-Id` | logical user-turn id; required with full identity, stable across retries |
 | `X-Opod-History-Offset` | user/assistant turns omitted before `messages` (default `0`) |
 | `X-Opod-Timezone` | optional IANA timezone for time grounding |
+| `X-Opod-Debug` | opt in to interleaved `event: opod` tool-activity SSE frames |
 | `X-Request-Id` | optional caller correlation id; generated and echoed when absent |
 
 Supports `stream: true` (OpenAI SSE chunks) and non-streaming JSON. After each turn the Agent

@@ -133,6 +133,70 @@ describe("Next route contracts", () => {
     expect(stream).toContain("answer");
   });
 
+  it("translates opod tool activity into stable UI data parts", async () => {
+    const frames = [
+      `event: opod\ndata: ${JSON.stringify({
+        args: "{}",
+        iteration: 0,
+        tool: "get_time",
+        type: "tool_call",
+      })}\n\n`,
+      `event: opod\ndata: ${JSON.stringify({
+        iteration: 0,
+        ms: 12,
+        result: "noon",
+        tool: "get_time",
+        type: "tool_result",
+      })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "answer" } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ].join("");
+    fetchOpodMock.mockResolvedValue(
+      new Response(frames, {
+        headers: { "content-type": "text/event-stream" },
+        status: 200,
+      }),
+    );
+
+    const response = await chatPost(
+      new Request("http://playground.test/api/chat", {
+        body: JSON.stringify({
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+    const stream = await response.text();
+
+    expect(stream).toContain("data-opodTool");
+    expect(stream).toContain("tool-0-get_time-0");
+    expect(stream).toContain("running");
+    expect(stream).toContain("done");
+    expect(stream).toContain("answer");
+  });
+
+  it("surfaces an explicit upstream SSE error frame", async () => {
+    fetchOpodMock.mockResolvedValue(
+      new Response('data: {"error":{"message":"private"}}\n\n', {
+        headers: { "content-type": "text/event-stream" },
+        status: 200,
+      }),
+    );
+
+    const response = await chatPost(
+      new Request("http://playground.test/api/chat", {
+        body: JSON.stringify({
+          messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    await expect(response.text()).resolves.toContain("stream failed");
+  });
+
   it("maps a thrown consolidation connection error to a safe 502", async () => {
     fetchOpodMock.mockRejectedValue(new Error("secret internal upstream address"));
     const response = await consolidatePost(

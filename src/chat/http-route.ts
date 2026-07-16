@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type OpenAI from "openai";
 import type { Container } from "../bootstrap/container.js";
-import { ChatCompletionRequest } from "../protocol/index.js";
+import { ChatCompletionRequest, OPOD_HEADERS } from "../protocol/index.js";
 import { getRequestContext } from "../http/context.js";
 import { openaiError } from "../http/errors.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";
@@ -37,7 +37,7 @@ export function chatRoute(container: Container): Hono {
     // Transport-level opt-in for the tool-activity debug channel (docs/adr/0006).
     // Any non-empty value enables it. It is NOT part of RequestContext/ChatContext —
     // it carries no identity, only a per-request "show me the plumbing" flag.
-    const debug = Boolean(c.req.header("x-opod-debug"));
+    const debug = Boolean(c.req.header(OPOD_HEADERS.debug));
 
     let prepared: PreparedTurn;
     try {

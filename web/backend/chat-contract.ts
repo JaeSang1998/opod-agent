@@ -14,6 +14,7 @@ export const PlaygroundChatRequest = z.object({
   messages: z.array(UIMessage).min(1),
   sessionId: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.7),
+  timezone: z.string().min(1).max(64).optional(),
   turnId: z.string().min(1).max(256).optional(),
   userId: z.string().optional(),
 }).superRefine((request, ctx) => {

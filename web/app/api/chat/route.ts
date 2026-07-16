@@ -5,7 +5,8 @@ import {
 import { fetchOpod } from "@/backend/opod";
 import { PlaygroundChatRequest } from "@/backend/chat-contract";
 import { opodChatHeaders, toOpodChatRequest } from "@/backend/opod-chat-request";
-import { readSSEData } from "@/chat/openai-sse";
+import { readSSEEvents } from "@/chat/openai-sse";
+import { createToolEventReducer } from "@/chat/tool-events";
 import { OPOD_HEADERS } from "@opod/protocol";
 
 /** A 30B reasoning model on local hardware is slow — don't cut it off. */
@@ -64,9 +65,27 @@ export async function POST(req: Request) {
       let reasoningOpen = false;
       let textOpen = false;
       let done = false;
+      const reduceToolEvent = createToolEventReducer();
 
       try {
-        for await (const payload of readSSEData(upstreamBody, req.signal)) {
+        for await (const frame of readSSEEvents(upstreamBody, req.signal)) {
+          // opod-agent interleaves "event: opod" tool-activity frames between the
+          // OpenAI data chunks — reconcile them into data-opodTool UI parts (by id,
+          // so a running chip updates in place to done) and never let them reach the
+          // OpenAI-chunk JSON path below.
+          if (frame.event === "opod") {
+            let toolEvent: unknown;
+            try {
+              toolEvent = JSON.parse(frame.data);
+            } catch {
+              continue;
+            }
+            const part = reduceToolEvent(toolEvent);
+            if (part) writer.write({ type: "data-opodTool", id: part.id, data: part });
+            continue;
+          }
+
+          const payload = frame.data;
           if (payload === "[DONE]") {
             done = true;
             break;

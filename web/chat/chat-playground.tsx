@@ -56,6 +56,7 @@ export function ChatPlayground() {
           maxTokens: Number(settings.maxTokens) || 1024,
           sessionId: settings.sessionId || undefined,
           temperature: Number(settings.temperature),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           turnId: crypto.randomUUID(),
           userId: settings.userId.trim() || undefined,
         },

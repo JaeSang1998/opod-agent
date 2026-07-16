@@ -8,6 +8,7 @@ and [AI Elements](https://elements.ai-sdk.dev). This is the canonical local play
 - Streams replies from opod-agent's OpenAI-compatible endpoint via `useChat`.
 - Renders the model's **thinking** (gemma is a reasoning model) in a collapsible
   `<Reasoning>` block, separate from the answer.
+- Shows server-side tool calls as live running/done chips via the opt-in `event: opod` SSE channel.
 - Controls for **character / user / session** ids (sent as `x-opod-*` headers) so
   you can exercise persona load + memory retrieval.
 - A **Consolidate memory** button that runs opod's sleep-time passes over the

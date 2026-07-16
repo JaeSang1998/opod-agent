@@ -34,14 +34,17 @@ describe("opod chat request bridge", () => {
       sessionId: "s1",
       historyOffset: 4,
       turnId: "turn-2",
+      timezone: "Europe/Zurich",
       userId: "u1",
     });
 
     expect(opodChatHeaders(input, "trace-1")).toMatchObject({
       [OPOD_HEADERS.characterId]: "luna",
+      [OPOD_HEADERS.debug]: "1",
       [OPOD_HEADERS.historyOffset]: "4",
       [OPOD_HEADERS.requestId]: "trace-1",
       [OPOD_HEADERS.sessionId]: "s1",
+      [OPOD_HEADERS.timezone]: "Europe/Zurich",
       [OPOD_HEADERS.turnId]: "turn-2",
       [OPOD_HEADERS.userId]: "u1",
     });

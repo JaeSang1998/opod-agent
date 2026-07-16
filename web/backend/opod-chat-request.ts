@@ -26,18 +26,22 @@ export function toOpodChatRequest(input: PlaygroundChatRequest): ChatCompletionR
 export function opodChatHeaders(
   input: Pick<
     PlaygroundChatRequest,
-    "characterId" | "historyOffset" | "sessionId" | "turnId" | "userId"
+    "characterId" | "historyOffset" | "sessionId" | "timezone" | "turnId" | "userId"
   >,
   requestId: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     [OPOD_HEADERS.requestId]: requestId,
+    // The playground is a debug surface — always ask opod-agent to interleave
+    // the tool-activity channel so server tool calls are visible.
+    [OPOD_HEADERS.debug]: "1",
   };
   if (input.characterId) headers[OPOD_HEADERS.characterId] = input.characterId;
   headers[OPOD_HEADERS.historyOffset] = String(input.historyOffset);
   if (input.userId) headers[OPOD_HEADERS.userId] = input.userId;
   if (input.sessionId) headers[OPOD_HEADERS.sessionId] = input.sessionId;
+  if (input.timezone) headers[OPOD_HEADERS.timezone] = input.timezone;
   if (input.turnId) headers[OPOD_HEADERS.turnId] = input.turnId;
   return headers;
 }
