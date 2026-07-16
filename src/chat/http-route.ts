@@ -21,6 +21,18 @@ export function chatRoute(container: Container): Hono {
     }
     const body = parsed.data;
     const ctx = getRequestContext(c);
+    if (!Number.isSafeInteger(ctx.historyOffset) || (ctx.historyOffset ?? 0) < 0) {
+      return c.json(
+        openaiError("invalid_request_error", "X-Opod-History-Offset must be a non-negative integer"),
+        400,
+      );
+    }
+    if (ctx.characterId && ctx.userId && ctx.sessionId && !ctx.turnId) {
+      return c.json(
+        openaiError("invalid_request_error", "X-Opod-Turn-Id is required for personalized learning"),
+        400,
+      );
+    }
     const signal = createRequestSignal(c.req.raw.signal, container.env.LLM_REQUEST_TIMEOUT_MS);
     // Transport-level opt-in for the tool-activity debug channel (docs/adr/0006).
     // Any non-empty value enables it. It is NOT part of RequestContext/ChatContext —

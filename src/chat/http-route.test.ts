@@ -47,8 +47,10 @@ function stubTool(name: string, result: string): AgentTool {
 const IDENTITY = {
   "content-type": "application/json",
   "x-opod-character-id": "luna",
+  "x-opod-history-offset": "0",
   "x-opod-user-id": "u1",
   "x-opod-session-id": "s1",
+  "x-opod-turn-id": "turn-http-1",
 };
 
 /** Reassemble the assistant text from the SSE `data:` frames (skips [DONE] and any
@@ -77,6 +79,31 @@ function parseOpodEvents(text: string): { type: string; tool?: string }[] {
 }
 
 describe("POST /v1/chat/completions", () => {
+  it("requires a logical turn id when full learning identity is present", async () => {
+    const { app } = buildApp();
+    const { "x-opod-turn-id": _turnId, ...headers } = IDENTITY;
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }] }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: { type: "invalid_request_error" } });
+  });
+
+  it("rejects an invalid absolute history offset", async () => {
+    const { app } = buildApp();
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { ...IDENTITY, "x-opod-history-offset": "not-an-integer" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }] }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: { type: "invalid_request_error" } });
+  });
+
   it("rejects a malformed body with a 400 OpenAI-style error envelope", async () => {
     const { app } = buildApp();
     const res = await app.request("/v1/chat/completions", {

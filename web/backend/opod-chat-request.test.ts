@@ -17,6 +17,7 @@ describe("opod chat request bridge", () => {
         },
       ],
       sessionId: "s1",
+      turnId: "turn-1",
       userId: "u1",
     });
 
@@ -31,13 +32,17 @@ describe("opod chat request bridge", () => {
       characterId: "luna",
       messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
       sessionId: "s1",
+      historyOffset: 4,
+      turnId: "turn-2",
       userId: "u1",
     });
 
     expect(opodChatHeaders(input, "trace-1")).toMatchObject({
       [OPOD_HEADERS.characterId]: "luna",
+      [OPOD_HEADERS.historyOffset]: "4",
       [OPOD_HEADERS.requestId]: "trace-1",
       [OPOD_HEADERS.sessionId]: "s1",
+      [OPOD_HEADERS.turnId]: "turn-2",
       [OPOD_HEADERS.userId]: "u1",
     });
   });

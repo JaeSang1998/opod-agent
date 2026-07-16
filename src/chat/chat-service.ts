@@ -15,10 +15,12 @@ import { assembleSystemPrompt } from "./system-prompt.js";
 
 export interface ChatContext {
   characterId?: string;
+  historyOffset?: number;
   userId?: string;
   sessionId?: string;
   timezone?: string;
   requestId?: string;
+  turnId?: string;
 }
 
 export interface ChatServiceConfig {
@@ -180,11 +182,22 @@ export class ChatService {
     if (!ctx.userId || !ctx.characterId || !ctx.sessionId) return;
 
     const decision = decideConsolidation(
-      { messages: priorMessages, assistantContent, summary },
+      {
+        messages: priorMessages,
+        assistantContent,
+        historyOffset: ctx.historyOffset ?? 0,
+        summary,
+      },
       { summaryTurnThreshold: this.config.summaryTurnThreshold },
     );
     if (!decision.enqueue) {
       this.log.debug("Consolidation skipped", { requestId: ctx.requestId, reason: decision.reason });
+      return;
+    }
+    if (!ctx.turnId) {
+      this.log.warn("Consolidation skipped without a logical turn id", {
+        requestId: ctx.requestId,
+      });
       return;
     }
 
@@ -194,10 +207,8 @@ export class ChatService {
         .update(
           JSON.stringify({
             characterId: ctx.characterId,
-            reason: decision.reason,
             sessionId: ctx.sessionId,
-            summaryRevision: summary?.revision ?? 0,
-            turns: decision.turns,
+            turnId: ctx.turnId,
             userId: ctx.userId,
           }),
         )

@@ -43,9 +43,11 @@ describe("Agent protocol", () => {
   it("defines every OPOD context header once", () => {
     expect(OPOD_HEADERS).toEqual({
       characterId: "x-opod-character-id",
+      historyOffset: "x-opod-history-offset",
       requestId: "x-request-id",
       sessionId: "x-opod-session-id",
       timezone: "x-opod-timezone",
+      turnId: "x-opod-turn-id",
       userId: "x-opod-user-id",
     });
   });

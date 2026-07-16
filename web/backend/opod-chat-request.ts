@@ -24,7 +24,10 @@ export function toOpodChatRequest(input: PlaygroundChatRequest): ChatCompletionR
 }
 
 export function opodChatHeaders(
-  input: Pick<PlaygroundChatRequest, "characterId" | "sessionId" | "userId">,
+  input: Pick<
+    PlaygroundChatRequest,
+    "characterId" | "historyOffset" | "sessionId" | "turnId" | "userId"
+  >,
   requestId: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
@@ -32,7 +35,9 @@ export function opodChatHeaders(
     [OPOD_HEADERS.requestId]: requestId,
   };
   if (input.characterId) headers[OPOD_HEADERS.characterId] = input.characterId;
+  headers[OPOD_HEADERS.historyOffset] = String(input.historyOffset);
   if (input.userId) headers[OPOD_HEADERS.userId] = input.userId;
   if (input.sessionId) headers[OPOD_HEADERS.sessionId] = input.sessionId;
+  if (input.turnId) headers[OPOD_HEADERS.turnId] = input.turnId;
   return headers;
 }

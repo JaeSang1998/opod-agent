@@ -9,10 +9,20 @@ const UIMessage = z.object({
 
 export const PlaygroundChatRequest = z.object({
   characterId: z.string().optional(),
+  historyOffset: z.number().int().nonnegative().default(0),
   maxTokens: z.number().int().positive().max(32_768).default(1024),
   messages: z.array(UIMessage).min(1),
   sessionId: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.7),
+  turnId: z.string().min(1).max(256).optional(),
   userId: z.string().optional(),
+}).superRefine((request, ctx) => {
+  if (request.characterId && request.userId && request.sessionId && !request.turnId) {
+    ctx.addIssue({
+      code: "custom",
+      message: "turnId is required for personalized learning",
+      path: ["turnId"],
+    });
+  }
 });
 export type PlaygroundChatRequest = z.infer<typeof PlaygroundChatRequest>;

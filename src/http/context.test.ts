@@ -23,20 +23,24 @@ function buildApp() {
 }
 
 describe("contextMiddleware -> RequestContext", () => {
-  it("populates all three fields when every header is present", async () => {
+  it("populates identity and turn-watermark fields when every header is present", async () => {
     const app = buildApp();
     const res = await app.request("/__ctx", {
       headers: {
         "x-opod-character-id": "luna",
+        "x-opod-history-offset": "42",
         "x-opod-user-id": "u1",
         "x-opod-session-id": "s1",
+        "x-opod-turn-id": "turn-7",
       },
     });
 
     expect(await res.json()).toEqual({
       characterId: "luna",
+      historyOffset: 42,
       requestId: expect.any(String),
       sessionId: "s1",
+      turnId: "turn-7",
       userId: "u1",
     });
   });
@@ -46,7 +50,7 @@ describe("contextMiddleware -> RequestContext", () => {
     const res = await app.request("/__ctx");
 
     // undefined fields are dropped by JSON serialization.
-    expect(await res.json()).toEqual({ requestId: expect.any(String) });
+    expect(await res.json()).toEqual({ historyOffset: 0, requestId: expect.any(String) });
   });
 
   it("sets only the supplied fields when headers are mixed", async () => {
@@ -60,6 +64,7 @@ describe("contextMiddleware -> RequestContext", () => {
 
     expect(await res.json()).toEqual({
       characterId: "luna",
+      historyOffset: 0,
       requestId: expect.any(String),
       sessionId: "s1",
     });
@@ -73,6 +78,7 @@ describe("contextMiddleware -> RequestContext", () => {
 
     expect(await res.json()).toEqual({
       requestId: expect.any(String),
+      historyOffset: 0,
       timezone: "Europe/Zurich",
     });
   });
@@ -82,7 +88,7 @@ describe("contextMiddleware -> RequestContext", () => {
     const res = await app.request("/__ctx");
 
     // undefined is dropped by JSON serialization.
-    expect(await res.json()).toEqual({ requestId: expect.any(String) });
+    expect(await res.json()).toEqual({ historyOffset: 0, requestId: expect.any(String) });
   });
 
   it("preserves a caller request ID and echoes it on the response", async () => {
@@ -91,7 +97,7 @@ describe("contextMiddleware -> RequestContext", () => {
       headers: { "x-request-id": "trace-123" },
     });
 
-    expect(await res.json()).toEqual({ requestId: "trace-123" });
+    expect(await res.json()).toEqual({ historyOffset: 0, requestId: "trace-123" });
     expect(res.headers.get("x-request-id")).toBe("trace-123");
   });
 });

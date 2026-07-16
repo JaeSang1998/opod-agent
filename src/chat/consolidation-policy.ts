@@ -9,6 +9,8 @@ export interface ConsolidationPolicyConfig {
 export interface ConsolidationPolicyInput {
   messages: ChatMessage[];
   assistantContent: string;
+  /** Number of conversation turns omitted before `messages`. */
+  historyOffset: number;
   summary: Summary | null;
 }
 
@@ -19,7 +21,7 @@ export type ConsolidationDecision =
       refreshSummary: false;
       turns: [];
     }
-  | { enqueue: true; reason: EnqueueReason; refreshSummary: true; turns: ChatMessage[] };
+  | { enqueue: true; reason: EnqueueReason; refreshSummary: boolean; turns: ChatMessage[] };
 
 const ENGLISH_MEMORY_CUE =
   /\b(?:i am|i'm|i have|i've|i live|i work|i study|i like|i love|i hate|i prefer|i need|i want|i plan|my\s+[\p{L}\p{N}_' -]{1,60}\s+(?:is|are|was|were))\b/iu;
@@ -42,13 +44,25 @@ export function decideConsolidation(
     conversation.push({ role: "assistant", content: input.assistantContent });
   }
 
-  // A Summary may describe more turns than a truncated client window contains.
-  // Without absolute turn ids we cannot prove that window contains the complete
-  // uncovered suffix, so reject it instead of persisting a gap.
   const latestExchangeSize = input.assistantContent.trim() ? 2 : 1;
-  const maxSafeCovered = Math.max(0, conversation.length - latestExchangeSize);
+  const latestUser = lastUserText(input.messages) ?? "";
+  const memorable = ENGLISH_MEMORY_CUE.test(latestUser) || KOREAN_MEMORY_CUE.test(latestUser);
+  const maxSafeCovered =
+    input.historyOffset + Math.max(0, conversation.length - latestExchangeSize);
   const claimedCovered = input.summary?.turnsCovered ?? 0;
-  if (claimedCovered > maxSafeCovered) {
+  const hasGap = claimedCovered < input.historyOffset || claimedCovered > maxSafeCovered;
+  if (hasGap) {
+    // The Summary cannot advance across an unknown gap. Still preserve a
+    // memorable newest exchange in Archival Memory; the logical turn id keeps
+    // this latest-only job retry-safe.
+    if (memorable) {
+      return {
+        enqueue: true,
+        reason: "memorable-content",
+        refreshSummary: false,
+        turns: conversation.slice(-latestExchangeSize),
+      };
+    }
     return {
       enqueue: false,
       reason: "unverifiable-gap",
@@ -56,10 +70,8 @@ export function decideConsolidation(
       turns: [],
     };
   }
-  const turns = conversation.slice(claimedCovered);
-  const latestUser = lastUserText(input.messages) ?? "";
+  const turns = conversation.slice(claimedCovered - input.historyOffset);
 
-  const memorable = ENGLISH_MEMORY_CUE.test(latestUser) || KOREAN_MEMORY_CUE.test(latestUser);
   const summaryStale = turns.length >= config.summaryTurnThreshold;
   const reason: EnqueueReason | "not-needed" = memorable
     ? "memorable-content"

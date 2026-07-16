@@ -32,7 +32,13 @@ function makeService(
 }
 
 /** Full identity — every retrieval branch (memories / core / summary) fires. */
-const fullCtx = { characterId: "luna", userId: "u1", sessionId: "s1" };
+const fullCtx = {
+  characterId: "luna",
+  historyOffset: 0,
+  sessionId: "s1",
+  turnId: "turn-1",
+  userId: "u1",
+};
 
 /**
  * Wraps a StubMemoryStore so a chosen read method rejects, exercising each of
@@ -85,6 +91,7 @@ describe("ChatService.prepare", () => {
     const { service, queue } = makeService();
     const prepared = await service.prepare(body, {
       characterId: "luna",
+      turnId: "turn-enqueue",
       userId: "u1",
       sessionId: "s1",
     });
@@ -110,13 +117,13 @@ describe("ChatService.prepare", () => {
 
   it("does not collapse distinct turns that reuse one correlation id", async () => {
     const { service, queue } = makeService();
-    const context = { ...fullCtx, requestId: "reused-trace" };
+    const context = { ...fullCtx, requestId: "reused-trace", turnId: "turn-cat" };
 
     await (await service.prepare(body, context)).postTurn("What a great name!");
     await (
       await service.prepare(
         { messages: [{ role: "user", content: "My dog is named Max." }] },
-        context,
+        { ...context, turnId: "turn-dog" },
       )
     ).postTurn("Max is a lovely name!");
 
@@ -125,6 +132,16 @@ describe("ChatService.prepare", () => {
       "reused-trace",
       "reused-trace",
     ]);
+    expect(new Set(queue.enqueued.map((job) => job.idempotencyKey))).toHaveProperty("size", 2);
+  });
+
+  it("keeps identical exchanges distinct when their logical turn ids differ", async () => {
+    const { service, queue } = makeService();
+
+    await (await service.prepare(body, { ...fullCtx, turnId: "repeat-1" })).postTurn("Nice!");
+    await (await service.prepare(body, { ...fullCtx, turnId: "repeat-2" })).postTurn("Nice!");
+
+    expect(queue.enqueued).toHaveLength(2);
     expect(new Set(queue.enqueued.map((job) => job.idempotencyKey))).toHaveProperty("size", 2);
   });
 

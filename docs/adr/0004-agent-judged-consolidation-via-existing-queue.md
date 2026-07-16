@@ -17,7 +17,11 @@ exchange, so delaying work cannot create a Summary gap. When warranted, the Agen
 calling the Agent's consolidation endpoint. Timing judgment lives in the Agent; execution substrate
 stays on the shared queue.
 
-Every job carries a stable idempotency key and correlation id. Consolidation exposes observation,
+Every job carries a stable idempotency key derived from relationship identity plus the caller's logical
+turn id; its correlation id stays independent. The caller also supplies the absolute retained-history
+offset, so the policy slices uncovered turns against the Summary watermark even after normal context
+truncation. If an older gap is genuinely unavailable, the Agent does not advance the Summary across
+it, but still sends a memorable latest exchange to Archival Memory. Consolidation exposes observation,
 reflection, and Summary stages. Writes within those stages use operation-specific idempotency keys;
 Summary persistence combines its key with revision compare-and-swap. A retry can therefore resume
 after a partial failure without duplicating importance, observations, reflections, or Core rewrites,

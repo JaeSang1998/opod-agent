@@ -52,9 +52,11 @@ export function ChatPlayground() {
       {
         body: {
           characterId: settings.characterId.trim() || undefined,
+          historyOffset: 0,
           maxTokens: Number(settings.maxTokens) || 1024,
           sessionId: settings.sessionId || undefined,
           temperature: Number(settings.temperature),
+          turnId: crypto.randomUUID(),
           userId: settings.userId.trim() || undefined,
         },
       },

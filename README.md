@@ -45,6 +45,8 @@ OpenAI-compatible (missing headers ⇒ plain proxy, no persona/memory):
 | `X-Opod-Character-Id` | which Persona to load |
 | `X-Opod-User-Id` | whose Archival Memory (relationship-scoped) |
 | `X-Opod-Session-Id` | which conversation Summary within that relationship |
+| `X-Opod-Turn-Id` | logical user-turn id; required with full identity, stable across retries |
+| `X-Opod-History-Offset` | user/assistant turns omitted before `messages` (default `0`) |
 | `X-Opod-Timezone` | optional IANA timezone for time grounding |
 | `X-Request-Id` | optional caller correlation id; generated and echoed when absent |
 
@@ -55,8 +57,14 @@ autonomously decides whether to enqueue a memory-update job.
 curl localhost:8787/v1/chat/completions \
   -H 'content-type: application/json' \
   -H 'X-Opod-Character-Id: luna' -H 'X-Opod-User-Id: u1' -H 'X-Opod-Session-Id: s1' \
+  -H 'X-Opod-Turn-Id: turn-01' -H 'X-Opod-History-Offset: 0' \
   -d '{"messages":[{"role":"user","content":"My cat is named Nova."}]}'
 ```
+
+Reuse `X-Opod-Turn-Id` only when retrying the same logical turn; generate a new value for the next
+user turn. A caller that truncates old messages sets `X-Opod-History-Offset` to the absolute count of
+omitted user/assistant turns. This lets the Agent compare the retained window with the Summary
+watermark without inferring occurrence identity from message text.
 
 ### `POST /memory/consolidate`
 

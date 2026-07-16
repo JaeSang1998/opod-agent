@@ -9,8 +9,9 @@ function decide(
   messages: ChatMessage[],
   assistantContent = "Got it.",
   summary: Summary | null = null,
+  historyOffset = 0,
 ) {
-  return decideConsolidation({ messages, assistantContent, summary }, config);
+  return decideConsolidation({ messages, assistantContent, historyOffset, summary }, config);
 }
 
 describe("decideConsolidation", () => {
@@ -81,7 +82,7 @@ describe("decideConsolidation", () => {
     ]);
   });
 
-  it("rejects a caller window whose uncovered suffix cannot be verified", () => {
+  it("uses an absolute history offset to select the uncovered suffix of a truncated window", () => {
     const summary: Summary = {
       userId: "u1",
       characterId: "luna",
@@ -97,11 +98,38 @@ describe("decideConsolidation", () => {
       { role: "user", content: "My new project is Atlas." },
     ];
 
-    expect(decide(messages, "Tell me more.", summary)).toEqual({
-      enqueue: false,
-      reason: "unverifiable-gap",
+    expect(decide(messages, "Tell me more.", summary, 98)).toEqual({
+      enqueue: true,
+      reason: "memorable-content",
+      refreshSummary: true,
+      turns: [
+        { role: "user", content: "My new project is Atlas." },
+        { role: "assistant", content: "Tell me more." },
+      ],
+    });
+  });
+
+  it("still learns the latest memorable exchange when an earlier gap is unverifiable", () => {
+    const summary: Summary = {
+      userId: "u1",
+      characterId: "luna",
+      sessionId: "s1",
+      content: "Earlier conversation.",
+      turnsCovered: 10,
+      revision: 2,
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    expect(
+      decide([{ role: "user", content: "My new project is Atlas." }], "Tell me more.", summary),
+    ).toEqual({
+      enqueue: true,
+      reason: "memorable-content",
       refreshSummary: false,
-      turns: [],
+      turns: [
+        { role: "user", content: "My new project is Atlas." },
+        { role: "assistant", content: "Tell me more." },
+      ],
     });
   });
 });

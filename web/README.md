@@ -43,5 +43,9 @@ pnpm dev      # http://localhost:3000
 - `backend/opod.ts` is the single outbound backend seam; change `OPOD_URL` or replace this adapter.
 - `app/api/` contains only Next.js route handlers.
 
+The playground sends a fresh `turnId` for each user submission and reuses that request body on
+transport retries. It currently retains the whole browser transcript, so `historyOffset` is `0`; a
+backend that trims messages must send the number of omitted user/assistant turns instead.
+
 Attachments/image upload are intentionally absent because opod's persona/memory pipeline is text-only
 today. Add that capability as a separate chat module when the backend contract supports it.

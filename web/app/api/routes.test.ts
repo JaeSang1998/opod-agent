@@ -32,7 +32,10 @@ describe("Next route contracts", () => {
       new Request("http://playground.test/api/chat", {
         body: JSON.stringify({
           characterId: "luna",
+          historyOffset: 0,
           messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+          sessionId: "s1",
+          turnId: "turn-web-1",
           userId: "u1",
         }),
         headers: { "content-type": "application/json", [OPOD_HEADERS.requestId]: "web-trace-1" },
@@ -44,7 +47,13 @@ describe("Next route contracts", () => {
     expect(response.headers.get(OPOD_HEADERS.requestId)).toBe("web-trace-1");
     expect(fetchOpodMock).toHaveBeenCalledWith(
       "/v1/chat/completions",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          [OPOD_HEADERS.historyOffset]: "0",
+          [OPOD_HEADERS.turnId]: "turn-web-1",
+        }),
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
