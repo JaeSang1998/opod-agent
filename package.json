@@ -8,10 +8,19 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:gemma": "bash scripts/dev-gemma.sh",
     "start": "node dist/index.js",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
     "build": "tsc -p tsconfig.build.json",
+    "build:web": "pnpm --dir web build",
+    "check": "npm run lint && npm run dead-code && npm run typecheck && npm run test:coverage && npm run build && npm run typecheck:web && npm run test:web && npm run build:web",
+    "dead-code": "knip",
+    "lint": "biome lint src web",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:web": "pnpm --dir web test",
+    "typecheck:web": "pnpm --dir web typecheck",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -21,7 +30,10 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.4",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.9",
+    "knip": "^6.27.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

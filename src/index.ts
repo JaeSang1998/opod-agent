@@ -1,10 +1,12 @@
 import { serve } from "@hono/node-server";
-import { loadEnv } from "./config/env.js";
-import { buildContainer } from "./core/container.js";
+import { loadAdapterOverrides } from "./bootstrap/adapter-loader.js";
+import { buildContainer } from "./bootstrap/container.js";
+import { loadEnv } from "./bootstrap/env.js";
 import { createApp } from "./http/app.js";
 
 const env = loadEnv();
-const container = buildContainer(env);
+const overrides = await loadAdapterOverrides(env);
+const container = buildContainer(env, overrides);
 const app = createApp(container);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {

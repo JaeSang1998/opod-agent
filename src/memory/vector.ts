@@ -1,6 +1,7 @@
 /** Cosine similarity for stub retrieval. Postgres uses pgvector operators instead. */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  const len = Math.min(a.length, b.length);
+  if (a.length === 0 || a.length !== b.length) return 0;
+  const len = a.length;
   let dot = 0;
   let na = 0;
   let nb = 0;

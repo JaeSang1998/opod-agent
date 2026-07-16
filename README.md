@@ -44,7 +44,8 @@ OpenAI-compatible (missing headers ⇒ plain proxy, no persona/memory):
 | --- | --- |
 | `X-Opod-Character-Id` | which Persona to load |
 | `X-Opod-User-Id` | whose Long-term Memory (relationship-scoped) |
-| `X-Opod-Session-Id` | which conversation Summary |
+| `X-Opod-Session-Id` | which conversation Summary within that relationship |
+| `X-Request-Id` | optional caller correlation id; generated and echoed when absent |
 
 Supports `stream: true` (OpenAI SSE chunks) and non-streaming JSON. After each turn the Agent
 autonomously decides whether to enqueue a memory-update job.
@@ -62,9 +63,21 @@ Called by `opod-worker`'s **memory-update** job (async). Extracts Long-term Memo
 refreshes the session Summary.
 
 ```json
-{ "userId": "u1", "characterId": "luna", "sessionId": "s1",
-  "turns": [{ "role": "user", "content": "..." }], "refreshSummary": true }
+{
+  "characterId": "luna",
+  "correlationId": "trace-01",
+  "idempotencyKey": "worker-job-01",
+  "reason": "manual",
+  "refreshSummary": true,
+  "sessionId": "s1",
+  "turns": [{ "role": "user", "content": "..." }],
+  "userId": "u1"
+}
 ```
+
+Set `OPOD_WORKER_TOKEN` (16+ characters) to require the worker to send
+`Authorization: Bearer …`. Each request is bounded by `LLM_REQUEST_TIMEOUT_MS`, propagates client
+cancellation to Provider/tool calls, and returns its correlation id in `X-Request-Id`.
 
 ### `GET /healthz`
 
@@ -91,11 +104,57 @@ interfaces. `STORE_DRIVER=stub` (default) uses in-memory implementations so the 
 today; the **Postgres + pgvector** adapters land once the shared schema is confirmed
 (see [ADR-0002](./docs/adr/0002-store-abstraction-direct-postgres-pgvector.md)).
 
+## Connecting another LLM Provider or database
+
+All environment-specific construction is concentrated in `src/bootstrap/`. The normal `npm run dev`
+and `npm start` entrypoints can load a deployment-owned module, so connecting a database does not
+require a second application entrypoint:
+
+```env
+STORE_DRIVER=postgres
+DATABASE_URL=postgres://user:pass@localhost:5432/opod
+OPOD_ADAPTER_MODULE=./deployment/adapters.js
+```
+
+That module exports a factory. It receives the fully validated environment, including
+`DATABASE_URL`, and returns any Provider/Store/queue overrides:
+
+```ts
+export async function createAdapters(env) {
+  const pool = new Pool({ connectionString: env.DATABASE_URL });
+  return {
+    provider: new MyProvider(providerClient),
+    personas: new PostgresPersonaStore(pool),
+    memory: new PostgresMemoryStore(pool),
+    queue: new PostgresJobQueue(pool),
+  };
+}
+```
+
+`OPOD_ADAPTER_MODULE` accepts a package name, absolute path, or path relative to the process working
+directory. The built-in executable supplies the OpenAI-compatible Provider and in-memory adapters.
+Any non-`stub` store driver must return all three persistence adapters; startup fails instead of
+silently falling back to volatile memory. A `MemoryStore` adapter must preserve the relationship +
+session Summary key and atomically implement its revision/idempotency guard.
+
+## Playground
+
+The canonical local UI is the Next.js app in [`web/`](./web/). It has one outbound backend seam
+(`web/backend/opod.ts`), validates requests against shared contracts from `src/protocol/`, preserves
+request cancellation/correlation, and can point at any opod-agent deployment through `OPOD_URL`.
+
 ## Scripts
 
 | Command | |
 | --- | --- |
 | `npm run dev` | watch-mode server (tsx) |
 | `npm run build` | compile to `dist/` |
+| `npm run build:web` | production-build the canonical Next.js playground |
+| `npm run lint` | Biome static analysis |
+| `npm run dead-code` | Knip dead file/export/dependency analysis |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | vitest |
+| `npm test` | root Vitest suite |
+| `npm run test:coverage` | root suite with enforced 90% line / 80% branch floor |
+| `npm run typecheck:web` | strict Next.js playground typecheck |
+| `npm run test:web` | playground SSE, contract, IME, and submit tests |
+| `npm run check` | full local quality gate used by CI |

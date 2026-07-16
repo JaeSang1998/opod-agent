@@ -17,5 +17,5 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }

@@ -21,7 +21,9 @@ export interface ParsedInsight {
 export function parseLines(text: string): string[] {
   return text
     .split("\n")
-    .map((l) => l.replace(/^\s*[-*\d]+[).]?\s*/, "").trim())
+    // Strip only recognized list markers: "-"/"*" or a number followed by "."/")".
+    // A bare leading number is legitimate prose ("10 push-ups ...") and is kept.
+    .map((l) => l.replace(/^\s*(?:[-*]|\d+[).])\s+/, "").trim())
     .filter((l) => l.length > 0);
 }
 

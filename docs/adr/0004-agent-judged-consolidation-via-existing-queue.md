@@ -9,11 +9,19 @@ also want the durability the existing Postgres job queue already provides (row-l
 
 ## Decision
 
-After each turn the Agent autonomously decides whether Consolidation is warranted (memorable content
-present, or Summary stale by turn/token threshold). When warranted, the Agent **enqueues a
+After each turn the Agent applies a domain-owned Consolidation Policy. Memorable relationship content
+is enqueued immediately; transient short questions wait until the Summary is stale by uncovered-turn
+threshold. A selected job contains all turns after the current Summary watermark, not only the latest
+exchange, so delaying work cannot create a Summary gap. When warranted, the Agent **enqueues a
 "memory-update" job** onto the existing Postgres queue. `opod-worker` executes it asynchronously by
 calling the Agent's consolidation endpoint. Timing judgment lives in the Agent; execution substrate
 stays on the shared queue.
+
+Every job carries a stable idempotency key and correlation id. Consolidation exposes observation,
+reflection, and Summary stages. Writes within those stages use operation-specific idempotency keys;
+Summary persistence combines its key with revision compare-and-swap. A retry can therefore resume
+after a partial failure without duplicating importance, observations, reflections, or Core rewrites,
+and concurrent jobs cannot silently overwrite a Summary.
 
 ## Considered options
 
@@ -25,4 +33,6 @@ stays on the shared queue.
 ## Consequences
 
 The Agent becomes a producer for the existing queue (a new coupling), but the chat path stays fast, the
-decision is content-aware, and durability is inherited rather than rebuilt.
+decision is content-aware, delayed quiet turns remain contiguous, and durability is inherited rather
+than rebuilt. Changing the persistence implementation does not change the policy or consolidation
+contract.

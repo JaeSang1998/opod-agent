@@ -53,7 +53,7 @@ export function rankByRetrievalScore<T extends Scorable>(
     .sort((a, b) => (a.t < b.t ? 1 : a.t > b.t ? -1 : 0));
   const recency = new Array<number>(items.length).fill(0);
   order.forEach((entry, rank) => {
-    recency[entry.i] = Math.pow(opts.recencyDecay, rank);
+    recency[entry.i] = opts.recencyDecay ** rank;
   });
 
   const nRel = normalize(relevance);

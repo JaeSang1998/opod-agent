@@ -1,0 +1,31 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["src/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "web": {
+      "entry": [
+        "app/**/{layout,page,route}.ts",
+        "app/**/{layout,page,route}.tsx",
+        "**/*.test.ts",
+        "**/*.test.tsx"
+      ],
+      "project": [
+        "app/**/*.ts",
+        "app/**/*.tsx",
+        "backend/**/*.ts",
+        "chat/**/*.ts",
+        "chat/**/*.tsx",
+        "components/**/*.tsx",
+        "lib/**/*.ts"
+      ],
+      "ignoreDependencies": ["shadcn", "tailwindcss", "tw-animate-css"],
+      "paths": {
+        "@": ["."],
+        "@opod/protocol": ["../src/protocol"]
+      }
+    }
+  }
+}

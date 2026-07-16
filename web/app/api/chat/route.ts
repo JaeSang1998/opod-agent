@@ -1,0 +1,124 @@
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+} from "ai";
+import { fetchOpod } from "@/backend/opod";
+import { PlaygroundChatRequest } from "@/backend/chat-contract";
+import { opodChatHeaders, toOpodChatRequest } from "@/backend/opod-chat-request";
+import { readSSEData } from "@/chat/openai-sse";
+import { OPOD_HEADERS } from "@opod/protocol/headers";
+
+/** A 30B reasoning model on local hardware is slow — don't cut it off. */
+export const maxDuration = 800;
+
+/**
+ * Bridges opod-agent (OpenAI-compatible wire format) to the AI SDK UI message
+ * stream that `useChat` consumes.
+ *
+ * The reason this is hand-rolled rather than using an openai-compatible
+ * provider: mlx_lm.server returns the model's thinking in a separate
+ * `delta.reasoning` field (not `<think>` tags in content, not
+ * `reasoning_content`), so neither the provider's default mapping nor
+ * `extractReasoningMiddleware` would surface it. Translating the SSE directly
+ * lets reasoning render in the <Reasoning> component.
+ */
+export async function POST(req: Request) {
+  const raw = await req.json().catch(() => null);
+  const parsed = PlaygroundChatRequest.safeParse(raw);
+  if (!parsed.success) {
+    return Response.json(
+      { error: { type: "invalid_request_error", message: parsed.error.message } },
+      { status: 400 },
+    );
+  }
+  // Persona + memory context rides in headers (opod ADR-0003).
+  const requestId = req.headers.get(OPOD_HEADERS.requestId) ?? crypto.randomUUID();
+  const headers = opodChatHeaders(parsed.data, requestId);
+  const body = toOpodChatRequest(parsed.data);
+
+  const upstream = await fetchOpod("/v1/chat/completions", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+
+  if (!upstream.ok || !upstream.body) {
+    const detail = await upstream.text().catch(() => "");
+    return new Response(`opod-agent error ${upstream.status}: ${detail}`, {
+      status: 502,
+    });
+  }
+  const upstreamBody = upstream.body;
+
+  const stream = createUIMessageStream({
+    execute: async ({ writer }) => {
+      let reasoningOpen = false;
+      let textOpen = false;
+
+      try {
+        for await (const payload of readSSEData(upstreamBody, req.signal)) {
+          if (payload === "[DONE]") continue;
+
+          let chunk: {
+            error?: { message?: string };
+            choices?: { delta?: { content?: string; reasoning?: string } }[];
+          };
+          try {
+            chunk = JSON.parse(payload);
+          } catch {
+            continue; // ignore keep-alives / malformed frames
+          }
+
+          if (chunk.error) {
+            writer.write({
+              type: "error",
+              errorText: chunk.error.message ?? "upstream error",
+            });
+            continue;
+          }
+
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+
+          if (delta.reasoning) {
+            if (!reasoningOpen) {
+              writer.write({ type: "reasoning-start", id: "reasoning" });
+              reasoningOpen = true;
+            }
+            writer.write({
+              type: "reasoning-delta",
+              id: "reasoning",
+              delta: delta.reasoning,
+            });
+          }
+
+          if (delta.content) {
+            // Thinking always precedes the answer — close it on first content.
+            if (reasoningOpen) {
+              writer.write({ type: "reasoning-end", id: "reasoning" });
+              reasoningOpen = false;
+            }
+            if (!textOpen) {
+              writer.write({ type: "text-start", id: "text" });
+              textOpen = true;
+            }
+            writer.write({
+              type: "text-delta",
+              id: "text",
+              delta: delta.content,
+            });
+          }
+        }
+      } finally {
+        if (reasoningOpen) writer.write({ type: "reasoning-end", id: "reasoning" });
+        if (textOpen) writer.write({ type: "text-end", id: "text" });
+      }
+    },
+    onError: (error) => (error instanceof Error ? error.message : String(error)),
+  });
+
+  const response = createUIMessageStreamResponse({ stream });
+  response.headers.set(OPOD_HEADERS.requestId, requestId);
+  return response;
+}

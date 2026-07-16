@@ -16,6 +16,15 @@
 
 export type MemoryKind = "observation" | "reflection";
 
+export interface RelationshipKey {
+  userId: string;
+  characterId: string;
+}
+
+export interface SessionKey extends RelationshipKey {
+  sessionId: string;
+}
+
 export interface LongTermMemory {
   id: string;
   userId: string;
@@ -57,10 +66,11 @@ export interface RelationshipState {
   updatedAt: string;
 }
 
-export interface Summary {
-  sessionId: string;
+export interface Summary extends SessionKey {
   content: string;
   /** How many turns are already folded into this summary. */
   turnsCovered: number;
+  /** Monotonic version used for compare-and-swap updates. */
+  revision: number;
   updatedAt: string;
 }

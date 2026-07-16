@@ -32,9 +32,8 @@ does not persist it.
 _Avoid_: Working memory, context window
 
 **Archival Memory**:
-Durable items about the user/relationship — Observations and Reflections — embedded in pgvector and
-retrieved by weighted score (recency · importance · relevance) each turn. Keyed by the (user, character)
-relationship.
+Durable items about the user/relationship — Observations and Reflections — retrieved by weighted score
+(recency · importance · relevance) each turn. Scoped to the (user, Character) relationship.
 _Avoid_: Long-term memory, vector memory, knowledge
 
 **Observation**:
@@ -58,23 +57,31 @@ standing mental model of this person. Relationship-scoped; rewritten during Refl
 _Avoid_: Profile, bio, working context
 
 **Summary**:
-A rolling episodic compression of one conversation, keyed by session, refreshed to preserve continuity
-without unbounded token growth.
+A rolling episodic compression of one conversation, keyed by session within a (user, Character)
+relationship, refreshed to preserve continuity without unbounded token growth.
 _Avoid_: Digest, recap
 
 **Consolidation**:
-The asynchronous learning pass. The Agent extracts Observations (with Importance) from a turn and, when
-accumulated Importance crosses the threshold, autonomously runs Reflection and rewrites Core Memory. The
-Agent enqueues a "memory-update" job onto the existing Postgres queue; `opod-worker` executes it against
-the Agent's consolidation endpoint (row-lock/retry safety, off the chat hot path — sleep-time work).
+The asynchronous learning pass. The Agent extracts Observations (with Importance) from uncovered turns
+and, when accumulated Importance crosses the threshold, runs Reflection and rewrites Core Memory.
 _Avoid_: Memory write, indexing
 
+**Consolidation Policy**:
+The rule that decides whether a completed exchange should enter Consolidation now or wait. Memorable
+content enters immediately; otherwise uncovered turns accumulate until the Summary is stale.
+_Avoid_: Scheduler, consolidation decider
+
+**Memory-update Job**:
+The handoff that asks a worker to run Consolidation for a relationship and session. It contains every
+turn not yet covered by the Summary so learning never creates gaps.
+_Avoid_: Memory event, background task
+
 **LLM Provider**:
-The swappable backend that generates completions and embeddings (OpenAI, or a local endpoint like
+The swappable component that generates completions and embeddings (OpenAI, or a local endpoint like
 Ollama), reached through one OpenAI-compatible adapter selected by environment configuration.
 _Avoid_: Model, backend, engine
 
 **PersonaStore / MemoryStore**:
-The Agent's data-access interfaces for Persona and Memory. Default implementations talk directly to
-the existing Postgres + pgvector; `opod-service-backend` remains the schema owner.
+The Agent's ports for loading Persona and reading or changing Memory without tying domain behavior to
+a particular persistence system.
 _Avoid_: Repository, DAO (use the Store names)

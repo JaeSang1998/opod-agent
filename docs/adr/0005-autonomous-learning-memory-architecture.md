@@ -27,22 +27,24 @@ lines of work:
 
 Memory has four tiers: **Short-term** (caller-passed turns), **Archival**
 (observations + reflections in pgvector, importance-weighted), **Core** (a compact,
-self-rewritten relationship digest, always injected), and **Summary** (session-scoped).
+self-rewritten relationship digest, always injected), and **Summary** (session-scoped within the
+user/Character relationship, so a reused session id cannot cross relationship data).
 
 - **Retrieval** uses the Generative-Agents weighted score (recency·importance·relevance,
   normalized), implemented as a pure function so a pgvector adapter can mirror it.
 - **Consolidation** (already async via opod-worker — ADR-0004 — which *is* the
-  sleep-time substrate) extracts observations *from the current exchange only*, scores
-  importance, and accumulates it in per-relationship state.
+  sleep-time substrate) extracts observations from every turn after the current Summary
+  watermark, scores importance, and accumulates it in per-relationship state.
 - **Reflection is the autonomous trigger**: when accumulated importance crosses
   `REFLECTION_IMPORTANCE_THRESHOLD`, the Agent runs a reflection pass (salient
   questions → weighted retrieval → cited insights appended as reflections) and
   **self-rewrites the Core block** (MemGPT-style), then resets the accumulator.
 
-The hot-path gate is now trivial: every turn enqueues a job carrying just that
-exchange. The "how much is new?" watermark problem disappears — prior turns were
-consolidated by their own jobs — and the decision of *whether to learn* is content-
-and salience-driven, not a turn count.
+The hot-path Consolidation Policy enqueues memorable content immediately. Transient
+short exchanges wait until the uncovered-turn threshold makes the Summary stale; that
+job carries the complete uncovered suffix. The decision of *when to inspect* is thus
+content-aware without dropping quiet turns, while the decision of *what to learn* and
+whether to reflect remains importance- and salience-driven.
 
 ## Consequences
 
