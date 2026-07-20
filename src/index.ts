@@ -14,5 +14,6 @@ serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     provider: env.LLM_BASE_URL,
     model: env.LLM_MODEL,
     store: env.STORE_DRIVER,
+    personas: env.DATABASE_URL ? "postgres" : "stub",
   });
 });
