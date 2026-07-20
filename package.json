@@ -28,11 +28,13 @@
     "@hono/node-server": "^1.13.7",
     "hono": "^4.6.14",
     "openai": "^4.77.0",
+    "pg": "^8.22.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^2.1.9",
     "knip": "^6.27.0",
     "tsx": "^4.19.2",

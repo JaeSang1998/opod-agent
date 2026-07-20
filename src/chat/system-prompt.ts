@@ -31,20 +31,24 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   sections.push(
     [
       `You are ${persona.name}.`,
-      persona.description,
+      persona.bio,
     ]
       .filter(Boolean)
       .join(" "),
   );
 
-  if (persona.personality) sections.push(`# Personality\n${persona.personality}`);
-  if (persona.speakingStyle) sections.push(`# Speaking style\n${persona.speakingStyle}`);
+  // Authored persona blocks go in verbatim, in assembly order. A "대화 예시" /
+  // example-dialogue block acts as few-shot voice anchoring; a guardrail block
+  // is the character's rules. The Agent adds no structure of its own.
+  for (const block of persona.blocks) {
+    if (block.content.trim()) sections.push(`# ${block.title}\n${block.content}`);
+  }
 
-  if (persona.exampleDialogues.length > 0) {
-    const examples = persona.exampleDialogues
-      .map((d) => `User: ${d.user}\n${persona.name}: ${d.character}`)
-      .join("\n\n");
-    sections.push(`# Example exchanges\n${examples}`);
+  if (persona.canonMemories.length > 0) {
+    const facts = persona.canonMemories.map((m) => `- ${m}`).join("\n");
+    sections.push(
+      `# Established facts of your life\n${facts}\nThese are canon: whatever you say must stay consistent with them.`,
+    );
   }
 
   if (now) sections.push(currentMomentSection(now, timezone));
@@ -66,11 +70,6 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   }
 
   if (toolsEnabled) sections.push(buildAbilitiesSection(toolNames));
-
-  if (persona.guardrails.length > 0) {
-    const rules = persona.guardrails.map((g) => `- ${g}`).join("\n");
-    sections.push(`# Rules you must follow\n${rules}`);
-  }
 
   sections.push(
     `Always stay in character as ${persona.name}. Reply naturally and concisely.`,

@@ -3,6 +3,7 @@ import { createLogger, type Logger } from "./logger.js";
 import { OpenAICompatProvider } from "../provider/openai-compat-provider.js";
 import type { LLMProvider } from "../provider/llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
+import { PostgresPersonaStore } from "../persona/postgres-persona-store.js";
 import { StubPersonaStore } from "../persona/stub-persona-store.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import { StubMemoryStore } from "../memory/stub-memory-store.js";
@@ -64,7 +65,12 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     );
   }
 
-  const personas = overrides.personas ?? new StubPersonaStore();
+  // Personas read the live OPOD rows whenever a DATABASE_URL is present — the
+  // built-in default (docs/adr/0002). Memory/queue stay stubbed until their
+  // pgvector adapters land, so STORE_DRIVER continues to gate full persistence.
+  const personas =
+    overrides.personas ??
+    (env.DATABASE_URL ? PostgresPersonaStore.fromUrl(env.DATABASE_URL) : new StubPersonaStore());
   const memory = overrides.memory ?? new StubMemoryStore();
   const queue = overrides.queue ?? new StubJobQueue(log);
 

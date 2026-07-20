@@ -77,12 +77,12 @@ export class ChatService {
 
     // No character → plain OpenAI-compatible proxy (docs/adr/0003).
     const persona = ctx.characterId
-      ? await this.personas.getPublished(ctx.characterId)
+      ? await this.personas.get(ctx.characterId)
       : null;
 
     if (!persona) {
       if (ctx.characterId) {
-        this.log.info("no published persona; degrading to proxy", { characterId: ctx.characterId });
+        this.log.info("no persona for character; degrading to proxy", { characterId: ctx.characterId });
       }
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
