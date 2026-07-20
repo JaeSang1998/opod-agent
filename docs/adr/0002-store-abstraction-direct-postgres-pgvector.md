@@ -32,3 +32,13 @@ The direct Postgres + pgvector adapter is the intended production default, but t
 (whether it already exists in service-backend or is new) is not yet decided. Scaffolding therefore
 starts against in-memory **stub** implementations of the Store interfaces so the end-to-end chat path
 is exercisable; the Postgres adapter lands once the schema is confirmed.
+
+## Resolution (2026-07-20)
+
+The persona schema question is settled: there is no separate Agent-side persona
+schema. The Agent reads the OPOD rows as-is — `characters` +
+`character_personas` (ordered free-text blocks) + `character_memories` (canon)
+— via the built-in `PostgresPersonaStore`, wired whenever `DATABASE_URL` is
+set. Blocks are the single source of truth shared with the content pipeline;
+active rows are the serving truth (no publish state). Memory/queue remain on
+stubs until their pgvector adapters land.
