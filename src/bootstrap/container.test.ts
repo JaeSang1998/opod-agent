@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { StubJobQueue } from "../memory/stub-job-queue.js";
 import { StubMemoryStore } from "../memory/stub-memory-store.js";
+import { PostgresJobQueue } from "../memory/postgres-job-queue.js";
+import { PostgresMemoryStore } from "../memory/postgres-memory-store.js";
 import { StubPersonaStore } from "../persona/stub-persona-store.js";
+import { PostgresPersonaStore } from "../persona/postgres-persona-store.js";
 import { FakeProvider } from "../testing/fake-provider.js";
 import { buildContainer } from "./container.js";
 import { loadEnv } from "./env.js";
@@ -31,7 +34,34 @@ describe("buildContainer adapter seam", () => {
     expect(container.queue).toBe(queue);
   });
 
-  it("names the missing adapters for a non-stub store driver", () => {
+  it("names the missing adapters for an unknown non-stub store driver", () => {
+    expect(() =>
+      buildContainer(loadEnv({
+        OPOD_WORKER_TOKEN: "a-very-long-worker-token",
+        STORE_DRIVER: "dynamo",
+      }), {
+        provider: new FakeProvider(),
+        log: noopLogger,
+      }),
+    ).toThrow("needs injected PersonaStore, MemoryStore, and JobQueue adapters");
+  });
+
+  it("wires built-in Postgres persistence for STORE_DRIVER=postgres", () => {
+    const container = buildContainer(loadEnv({
+      OPOD_WORKER_TOKEN: "a-very-long-worker-token",
+      STORE_DRIVER: "postgres",
+      DATABASE_URL: "postgresql://user:pw@localhost:5433/db",
+    }), {
+      provider: new FakeProvider(),
+      log: noopLogger,
+    });
+
+    expect(container.personas).toBeInstanceOf(PostgresPersonaStore);
+    expect(container.memory).toBeInstanceOf(PostgresMemoryStore);
+    expect(container.queue).toBeInstanceOf(PostgresJobQueue);
+  });
+
+  it("refuses STORE_DRIVER=postgres without a DATABASE_URL", () => {
     expect(() =>
       buildContainer(loadEnv({
         OPOD_WORKER_TOKEN: "a-very-long-worker-token",
@@ -40,7 +70,7 @@ describe("buildContainer adapter seam", () => {
         provider: new FakeProvider(),
         log: noopLogger,
       }),
-    ).toThrow("needs injected PersonaStore, MemoryStore, and JobQueue adapters");
+    ).toThrow('STORE_DRIVER="postgres" requires DATABASE_URL');
   });
 });
 
