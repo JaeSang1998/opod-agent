@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import type { Env } from "./env.js";
 import { createLogger, type Logger } from "./logger.js";
 import { OpenAICompatProvider } from "../provider/openai-compat-provider.js";
+import { DbSettingsProvider } from "../provider/db-settings-provider.js";
 import type { LLMProvider } from "../provider/llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
 import { PostgresPersonaStore } from "../persona/postgres-persona-store.js";
@@ -52,17 +53,6 @@ export interface ContainerOverrides {
  */
 export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Container {
   const log = overrides.log ?? createLogger(env.LOG_LEVEL);
-  const provider =
-    overrides.provider ??
-    new OpenAICompatProvider({
-      baseUrl: env.LLM_BASE_URL,
-      apiKey: env.LLM_API_KEY,
-      model: env.LLM_MODEL,
-      embeddingModel: env.EMBEDDING_MODEL,
-      embeddingBaseUrl: env.EMBEDDING_BASE_URL,
-      embeddingApiKey: env.EMBEDDING_API_KEY,
-    });
-
   // STORE_DRIVER="postgres" is a built-in: persona, memory, and queue all ride
   // one shared pool onto the OPOD Postgres (docs/adr/0002 Resolution +
   // docs/persona-memory-plan.md Phase 3). Any other non-stub driver still
@@ -96,6 +86,23 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     return p;
   };
   const pool = builtinPostgres && env.DATABASE_URL ? trackedPool("store") : null;
+
+  const providerEnvConfig = {
+    baseUrl: env.LLM_BASE_URL,
+    apiKey: env.LLM_API_KEY,
+    model: env.LLM_MODEL,
+    embeddingModel: env.EMBEDDING_MODEL,
+    embeddingBaseUrl: env.EMBEDDING_BASE_URL,
+    embeddingApiKey: env.EMBEDDING_API_KEY,
+  };
+  // Under the postgres driver, chat-LLM config comes from the admin console
+  // (agent.* with per-field planner.* inheritance) and re-resolves on a TTL —
+  // env stays the bootstrap fallback. Elsewhere env is the whole config.
+  const provider =
+    overrides.provider ??
+    (pool
+      ? new DbSettingsProvider(pool, providerEnvConfig, log)
+      : new OpenAICompatProvider(providerEnvConfig));
 
   // Personas read the live OPOD rows whenever a DATABASE_URL is present — the
   // built-in default (docs/adr/0002). Memory/queue persist only under the
