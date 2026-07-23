@@ -1,0 +1,12 @@
+.git/
+.github/
+.gstack/
+.env
+.env.*
+coverage/
+dist/
+docker-compose.yml
+docker-compose.*.yml
+node_modules/
+web/.next/
+web/node_modules/

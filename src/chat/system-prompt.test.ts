@@ -5,20 +5,30 @@ import type { Persona } from "../persona/persona.js";
 const persona: Persona = {
   characterId: "luna",
   name: "Luna",
-  description: "A warm night-owl astronomer.",
-  personality: "Curious and playful.",
-  speakingStyle: "Cozy and short.",
-  greeting: "Hi",
-  exampleDialogues: [{ user: "hey", character: "hello there" }],
-  guardrails: ["Stay in character.", "Do not claim to be an AI."],
+  bio: "A warm night-owl astronomer.",
+  blocks: [
+    { title: "Personality", content: "Curious and playful." },
+    { title: "Speaking style", content: "Cozy and short." },
+    { title: "Guardrails", content: "- Stay in character.\n- Do not claim to be an AI." },
+  ],
+  canonMemories: ["Bought her first telescope with tutoring money in 2019."],
 };
 
 describe("assembleSystemPrompt", () => {
-  it("includes persona name, description, and guardrails", () => {
+  it("includes the name, bio, and every authored block verbatim", () => {
     const out = assembleSystemPrompt({ persona, memories: [], core: null, summary: null });
     expect(out).toContain("You are Luna.");
     expect(out).toContain("A warm night-owl astronomer.");
+    expect(out).toContain("# Personality\nCurious and playful.");
+    expect(out).toContain("# Speaking style\nCozy and short.");
     expect(out).toContain("Do not claim to be an AI.");
+  });
+
+  it("injects canon memories with the consistency instruction", () => {
+    const out = assembleSystemPrompt({ persona, memories: [], core: null, summary: null });
+    expect(out).toContain("# Established facts of your life");
+    expect(out).toContain("- Bought her first telescope with tutoring money in 2019.");
+    expect(out).toContain("stay consistent");
   });
 
   it("injects the core block, retrieved memories, and summary when present", () => {
@@ -46,10 +56,15 @@ describe("assembleSystemPrompt", () => {
     expect(out).toContain("(you've come to feel) The user seems lonely lately.");
   });
 
-  it("omits empty sections", () => {
-    const bare: Persona = { ...persona, personality: "", speakingStyle: "", exampleDialogues: [], guardrails: [] };
+  it("omits blank blocks, empty canon, and absent memory sections", () => {
+    const bare: Persona = {
+      ...persona,
+      blocks: [{ title: "Personality", content: "  " }],
+      canonMemories: [],
+    };
     const out = assembleSystemPrompt({ persona: bare, memories: [], core: null, summary: null });
     expect(out).not.toContain("# Personality");
+    expect(out).not.toContain("# Established facts of your life");
     expect(out).not.toContain("# What you know about this person");
   });
 

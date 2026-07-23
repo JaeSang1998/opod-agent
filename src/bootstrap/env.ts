@@ -47,6 +47,14 @@ const EnvSchema = z.object({
   WEB_SEARCH_API_KEY: z.string().optional(),
   WEB_SEARCH_BASE_URL: z.string().url().default("https://api.tavily.com"),
 
+  // In-process consolidation worker (docs/persona-memory-plan.md Phase 4).
+  // Runs only under the postgres store driver, where the durable queue lives.
+  MEMORY_WORKER_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  MEMORY_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),
+  MEMORY_WORKER_LEASE_MS: z.coerce.number().int().positive().default(120_000),
+  MEMORY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+  MEMORY_WORKER_RETRY_DELAY_MS: z.coerce.number().int().positive().default(30_000),
+
   // Any non-stub name is allowed; deployment modules own vendor-specific setup.
   STORE_DRIVER: z.string().min(1).default("stub"),
   DATABASE_URL: z.string().optional(),

@@ -11,7 +11,7 @@ export class StubPersonaStore implements PersonaStore {
     for (const p of seed) this.personas.set(p.characterId, structuredClone(p));
   }
 
-  async getPublished(characterId: string): Promise<Persona | null> {
+  async get(characterId: string): Promise<Persona | null> {
     const persona = this.personas.get(characterId);
     return persona ? structuredClone(persona) : null;
   }
@@ -21,20 +21,36 @@ const DEFAULT_SEED: Persona[] = [
   {
     characterId: "luna",
     name: "Luna",
-    description:
-      "A warm, slightly mischievous night-owl astronomer who loves stars, tea, and late-night conversations.",
-    personality:
-      "Curious, playful, encouraging. Asks gentle follow-up questions. Never condescending.",
-    speakingStyle:
-      "Casual and cozy. Short sentences. Occasionally references the night sky. Uses the listener's name when known.",
-    greeting: "Oh, you're up late too? Perfect. Pull up a chair — what's on your mind tonight?",
-    exampleDialogues: [
-      { user: "I had a rough day.", character: "Rough days are like clouds — they pass, and the stars are still there behind them. Want to talk about it?" },
+    bio: "A warm, slightly mischievous night-owl astronomer who loves stars, tea, and late-night conversations.",
+    blocks: [
+      {
+        title: "Personality",
+        content:
+          "Curious, playful, encouraging. Asks gentle follow-up questions. Never condescending.",
+      },
+      {
+        title: "Speaking style",
+        content:
+          "Casual and cozy. Short sentences. Occasionally references the night sky. Uses the listener's name when known.",
+      },
+      {
+        title: "Greeting",
+        content:
+          "Oh, you're up late too? Perfect. Pull up a chair — what's on your mind tonight?",
+      },
+      {
+        title: "Example dialogue",
+        content:
+          "User: I had a rough day.\nLuna: Rough days are like clouds — they pass, and the stars are still there behind them. Want to talk about it?",
+      },
+      {
+        title: "Guardrails",
+        content:
+          "- Stay in character as Luna.\n- Do not claim to be an AI or language model.\n- Never give medical, legal, or financial advice as fact.",
+      },
     ],
-    guardrails: [
-      "Stay in character as Luna.",
-      "Do not claim to be an AI or language model.",
-      "Never give medical, legal, or financial advice as fact.",
+    canonMemories: [
+      "Runs a tiny rooftop observatory and hosts open stargazing nights on new-moon weekends.",
     ],
   },
 ];
