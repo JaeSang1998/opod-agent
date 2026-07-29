@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../provider/llm-provider.js";
+import { LLM_LOG_TYPE, type LLMProvider } from "../provider/llm-provider.js";
 import { completeText } from "./complete-text.js";
 import type { MemoryStore } from "./memory-store.js";
 import type { ArchivalMemory, RelationshipKey } from "./types.js";
@@ -49,8 +49,8 @@ export class Reflector {
     const recent = await this.memory.recentObservations(key, this.config.recentN);
     if (recent.length === 0) return { reflectionsStored: 0, coreUpdated: false };
 
-    const questions = await this.salientQuestions(recent, signal);
-    const reflections = await this.reflectionsFor(key, questions, signal);
+    const questions = await this.salientQuestions(key, recent, idempotencyKey, signal);
+    const reflections = await this.reflectionsFor(key, questions, idempotencyKey, signal);
 
     const reflectionsStored = await this.storeReflections(
       key,
@@ -70,7 +70,9 @@ export class Reflector {
 
   /** GA generate_focal_pt: the most salient high-level questions about the user. */
   private async salientQuestions(
+    key: RelationshipKey,
     recent: ArchivalMemory[],
+    requestId?: string,
     signal?: AbortSignal,
   ): Promise<string[]> {
     const system =
@@ -78,7 +80,15 @@ export class Reflector {
       "most salient high-level questions we can answer about the person? " +
       "Return one question per line, no numbering.";
     const statements = recent.map((m) => `- ${m.content}`).join("\n");
-    const text = await completeText(this.provider, system, statements, signal);
+    const text = await completeText(this.provider, system, statements, {
+      signal,
+      log: {
+        type: LLM_LOG_TYPE.memoryReflectionQuestions,
+        requestId,
+        userId: key.userId,
+        characterId: key.characterId,
+      },
+    });
     return parseLines(text).slice(0, this.config.questionsPerPass);
   }
 
@@ -86,23 +96,34 @@ export class Reflector {
   private async reflectionsFor(
     key: RelationshipKey,
     questions: string[],
+    requestId?: string,
     signal?: AbortSignal,
   ): Promise<ParsedReflection[]> {
     const reflections: ParsedReflection[] = [];
     for (const q of questions) {
-      const [qEmbedding] = await this.provider.embed([q], { signal });
+      const [qEmbedding] = await this.provider.embed([q], {
+        signal,
+        log: {
+          type: LLM_LOG_TYPE.memoryReflectionQuestionEmbedding,
+          requestId,
+          userId: key.userId,
+          characterId: key.characterId,
+        },
+      });
       const evidence = await this.memory.retrieve(key, qEmbedding ?? [], this.config.retrieveTopK, {
         weights: this.config.weights,
         recencyDecay: this.config.recencyDecay,
       });
-      reflections.push(...(await this.synthesize(evidence, signal)));
+      reflections.push(...(await this.synthesize(key, evidence, requestId, signal)));
     }
     return reflections;
   }
 
   /** Infer cited high-level Reflections from retrieved evidence. */
   private async synthesize(
+    key: RelationshipKey,
     evidence: ArchivalMemory[],
+    requestId?: string,
     signal?: AbortSignal,
   ): Promise<ParsedReflection[]> {
     if (evidence.length === 0) return [];
@@ -111,7 +132,15 @@ export class Reflector {
       "person from the statements below? Format each as: reflection (because of 1, 3). " +
       "The numbers refer to the statements. One Reflection per line.";
     const numbered = evidence.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
-    const text = await completeText(this.provider, system, numbered, signal);
+    const text = await completeText(this.provider, system, numbered, {
+      signal,
+      log: {
+        type: LLM_LOG_TYPE.memoryReflectionSynthesis,
+        requestId,
+        userId: key.userId,
+        characterId: key.characterId,
+      },
+    });
     return parseReflections(text, evidence).slice(0, this.config.reflectionsPerQuestion);
   }
 
@@ -124,7 +153,15 @@ export class Reflector {
     if (reflections.length === 0) return 0;
     const embeddings = await this.provider.embed(
       reflections.map((reflection) => reflection.content),
-      { signal },
+      {
+        signal,
+        log: {
+          type: LLM_LOG_TYPE.memoryReflectionEmbedding,
+          requestId: idempotencyKey,
+          userId: key.userId,
+          characterId: key.characterId,
+        },
+      },
     );
     const rows = await this.memory.upsertMany(
       key,
@@ -160,7 +197,17 @@ export class Reflector {
     ].join("\n");
     const user = `Current Core Memory:\n${current?.content ?? "(empty)"}\n\nNew material:\n${material}`;
 
-    const content = (await completeText(this.provider, system, user, signal)).trim();
+    const content = (
+      await completeText(this.provider, system, user, {
+        signal,
+        log: {
+          type: LLM_LOG_TYPE.memoryCoreRewrite,
+          requestId: idempotencyKey,
+          userId: key.userId,
+          characterId: key.characterId,
+        },
+      })
+    ).trim();
     if (!content) return false;
     await this.memory.saveCoreMemory(
       {

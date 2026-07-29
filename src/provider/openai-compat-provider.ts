@@ -66,7 +66,25 @@ export class OpenAICompatProvider implements LLMProvider {
 
   async embed(texts: string[], options?: ProviderCallOptions): Promise<number[][]> {
     if (texts.length === 0) return [];
-    const res = await this.embedClient.embeddings.create(
+    return (await this.embedWithResponse(texts, options)).embeddings;
+  }
+
+  async embedWithResponse(
+    texts: string[],
+    options?: ProviderCallOptions,
+  ): Promise<{ embeddings: number[][]; response: OpenAI.CreateEmbeddingResponse }> {
+    if (texts.length === 0) {
+      return {
+        embeddings: [],
+        response: {
+          object: "list",
+          model: this.embeddingModel,
+          data: [],
+          usage: { prompt_tokens: 0, total_tokens: 0 },
+        },
+      };
+    }
+    const response = await this.embedClient.embeddings.create(
       {
         model: this.embeddingModel,
         input: texts,
@@ -74,6 +92,9 @@ export class OpenAICompatProvider implements LLMProvider {
       { signal: options?.signal },
     );
     // Rows may come back reordered; `index` restores input order.
-    return [...res.data].sort((a, b) => a.index - b.index).map((d) => d.embedding);
+    const embeddings = [...response.data]
+      .sort((a, b) => a.index - b.index)
+      .map((item) => item.embedding);
+    return { embeddings, response };
   }
 }

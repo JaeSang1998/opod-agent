@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../provider/llm-provider.js";
+import { LLM_LOG_TYPE, type LLMProvider } from "../provider/llm-provider.js";
 import { completeText } from "./complete-text.js";
 import type { ConsolidationRequest } from "../protocol/index.js";
 import { transcriptOf } from "../openai/messages.js";
@@ -86,7 +86,7 @@ export class ConsolidationService {
 
     // 1. Extract observations about the user, each scored for importance (1-10).
     const stored = await atStage("observations", input, async () => {
-      const observations = await this.extract(transcript, signal);
+      const observations = await this.extract(input, transcript, signal);
       const rows = await this.storeObservations(key, observations, input.idempotencyKey, signal);
       const gained = rows.reduce((sum, row) => sum + row.importance, 0);
       if (gained > 0) {
@@ -136,9 +136,21 @@ export class ConsolidationService {
   }
 
   /** Combined extraction + poignancy scoring in a single call. */
-  private async extract(transcript: string, signal?: AbortSignal): Promise<ParsedObservation[]> {
+  private async extract(
+    input: ConsolidateInput,
+    transcript: string,
+    signal?: AbortSignal,
+  ): Promise<ParsedObservation[]> {
     if (!transcript.trim()) return [];
-    const text = await completeText(this.provider, EXTRACT_SYSTEM, transcript, signal);
+    const text = await completeText(this.provider, EXTRACT_SYSTEM, transcript, {
+      signal,
+      log: {
+        type: LLM_LOG_TYPE.memoryExtract,
+        requestId: input.correlationId,
+        userId: input.userId,
+        characterId: input.characterId,
+      },
+    });
     return parseObservations(text);
   }
 
@@ -149,7 +161,15 @@ export class ConsolidationService {
     signal?: AbortSignal,
   ): Promise<ArchivalMemory[]> {
     if (observations.length === 0) return [];
-    const embeddings = await this.provider.embed(observations.map((o) => o.content), { signal });
+    const embeddings = await this.provider.embed(observations.map((o) => o.content), {
+      signal,
+      log: {
+        type: LLM_LOG_TYPE.memoryObservationEmbedding,
+        requestId: idempotencyKey,
+        userId: key.userId,
+        characterId: key.characterId,
+      },
+    });
     return this.memory.upsertMany(
       key,
       observations.map((o, i) => ({
@@ -194,7 +214,16 @@ export class ConsolidationService {
       const previous = await this.memory.getSummary(session);
       const expectedRevision = previous?.revision ?? 0;
       const user = `Previous summary:\n${previous?.content ?? "(none)"}\n\nNew turns:\n${transcript}`;
-      const text = await completeText(this.provider, SUMMARY_SYSTEM, user, signal);
+      const text = await completeText(this.provider, SUMMARY_SYSTEM, user, {
+        signal,
+        log: {
+          type: LLM_LOG_TYPE.memorySummary,
+          requestId: idempotencyKey,
+          userId: session.userId,
+          characterId: session.characterId,
+          metadata: { attempt },
+        },
+      });
 
       const summary: Summary = {
         ...session,

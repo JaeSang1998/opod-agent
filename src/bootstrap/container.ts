@@ -3,6 +3,11 @@ import type { Env } from "./env.js";
 import { createLogger, type Logger } from "./logger.js";
 import { OpenAICompatProvider } from "../provider/openai-compat-provider.js";
 import type { LLMProvider } from "../provider/llm-provider.js";
+import {
+  LoggedLlmProvider,
+  PostgresLlmLogStore,
+  UnavailableLlmLogStore,
+} from "../provider/logged-llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
 import { PostgresPersonaStore } from "../persona/postgres-persona-store.js";
 import { StubPersonaStore } from "../persona/stub-persona-store.js";
@@ -52,7 +57,7 @@ export interface ContainerOverrides {
  */
 export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Container {
   const log = overrides.log ?? createLogger(env.LOG_LEVEL);
-  const provider =
+  const rawProvider =
     overrides.provider ??
     new OpenAICompatProvider({
       baseUrl: env.LLM_BASE_URL,
@@ -96,6 +101,24 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     return p;
   };
   const pool = builtinPostgres && env.DATABASE_URL ? trackedPool("store") : null;
+  const llmLogPool = env.DATABASE_URL ? (pool ?? trackedPool("llm-log")) : null;
+  const provider =
+    overrides.provider && !llmLogPool
+      ? rawProvider
+      : new LoggedLlmProvider(
+          rawProvider,
+          llmLogPool
+            ? new PostgresLlmLogStore(llmLogPool)
+            : new UnavailableLlmLogStore(),
+          {
+            provider: "openai-compatible",
+            chatEndpoint: `${env.LLM_BASE_URL.replace(/\/$/, "")}/chat/completions`,
+            embeddingEndpoint: `${(env.EMBEDDING_BASE_URL ?? env.LLM_BASE_URL).replace(/\/$/, "")}/embeddings`,
+            embeddingModel: env.EMBEDDING_MODEL,
+            onFinishWriteError: (error) =>
+              log.error("failed to finalize LLM log", { err: String(error) }),
+          },
+        );
 
   // Personas read the live OPOD rows whenever a DATABASE_URL is present — the
   // built-in default (docs/adr/0002). Memory/queue persist only under the

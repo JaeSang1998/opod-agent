@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import type { LLMProvider } from "../provider/llm-provider.js";
+import type { LLMProvider, LlmLogContext } from "../provider/llm-provider.js";
 import { type AgentTool, type ToolContext, executeToolCall } from "../tools/index.js";
 import {
   assembleToolCall,
@@ -31,6 +31,7 @@ export interface ToolLoopOptions {
   request: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParams, "stream">;
   tools: AgentTool[];
   ctx: ToolContext;
+  logContext?: LlmLogContext;
   maxIterations?: number; // default 5
   /** Optional observer of tool activity. Emitted best-effort: a throwing listener
    *  is swallowed so it can never break a reply. */
@@ -68,7 +69,7 @@ export async function runToolLoop(
         tool_choice: i === maxIterations - 1 ? "none" : "auto",
         stream: false,
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-      { signal: ctx.signal },
+      { signal: ctx.signal, log: opts.logContext },
     );
 
     const message = completion.choices[0]?.message;
@@ -121,7 +122,7 @@ export async function* runToolLoopStream(
         tool_choice: i === maxIterations - 1 ? "none" : "auto",
         stream: true,
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-      { signal: ctx.signal },
+      { signal: ctx.signal, log: opts.logContext },
     );
 
     let content = "";

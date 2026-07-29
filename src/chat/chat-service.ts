@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 import { createHash, randomUUID } from "node:crypto";
-import type { LLMProvider } from "../provider/llm-provider.js";
+import { LLM_LOG_TYPE, type LLMProvider } from "../provider/llm-provider.js";
 import type { PersonaStore } from "../persona/persona-store.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { JobQueue } from "../memory/job-queue.js";
@@ -133,7 +133,15 @@ export class ChatService {
   ): Promise<ArchivalMemory[]> {
     if (!ctx.userId || !ctx.characterId || !query) return [];
     try {
-      const [embedding] = await this.provider.embed([query], { signal });
+      const [embedding] = await this.provider.embed([query], {
+        signal,
+        log: {
+          type: LLM_LOG_TYPE.memoryRetrieveEmbedding,
+          requestId: ctx.requestId,
+          userId: ctx.userId,
+          characterId: ctx.characterId,
+        },
+      });
       if (!embedding) return [];
       return await this.memory.retrieve(
         { userId: ctx.userId, characterId: ctx.characterId },

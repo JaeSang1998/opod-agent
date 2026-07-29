@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../provider/llm-provider.js";
+import type { LLMProvider, ProviderCallOptions } from "../provider/llm-provider.js";
 
 /**
  * Ask the provider's default model a single system+user prompt and return the
@@ -10,7 +10,7 @@ export async function completeText(
   provider: LLMProvider,
   system: string,
   user: string,
-  signal?: AbortSignal,
+  options: ProviderCallOptions,
 ): Promise<string> {
   const res = await provider.chat(
     {
@@ -20,7 +20,7 @@ export async function completeText(
         { role: "user", content: user },
       ],
     },
-    { signal },
+    options,
   );
   return res.choices[0]?.message?.content ?? "";
 }

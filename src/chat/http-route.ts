@@ -8,6 +8,7 @@ import { openaiError } from "../http/errors.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";
 import { type ToolLoopEvent, runToolLoop, runToolLoopStream } from "./tool-loop.js";
 import type { PreparedTurn } from "./chat-service.js";
+import { LLM_LOG_TYPE } from "../provider/llm-provider.js";
 
 /** POST /v1/chat/completions — OpenAI-compatible, persona+memory-enriched. */
 export function chatRoute(container: Container): Hono {
@@ -64,6 +65,12 @@ export function chatRoute(container: Container): Hono {
                 request: prepared.request,
                 tools: prepared.tools,
                 ctx: { timezone: ctx.timezone, signal, log: container.log },
+                logContext: {
+                  type: LLM_LOG_TYPE.chatTool,
+                  requestId: ctx.requestId,
+                  userId: ctx.userId,
+                  characterId: ctx.characterId,
+                },
                 // Only with the debug header do we emit "event: opod" frames; the
                 // default surface stays byte-identical (no extra frames/fields).
                 onEvent: debug
@@ -74,7 +81,15 @@ export function chatRoute(container: Container): Hono {
                 ...prepared.request,
                 stream: true,
               } as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
-              { signal },
+              {
+                signal,
+                log: {
+                  type: LLM_LOG_TYPE.chat,
+                  requestId: ctx.requestId,
+                  userId: ctx.userId,
+                  characterId: ctx.characterId,
+                },
+              },
             );
 
           for await (const chunk of stream) {
@@ -106,13 +121,27 @@ export function chatRoute(container: Container): Hono {
             request: prepared.request,
             tools: prepared.tools,
             ctx: { timezone: ctx.timezone, signal, log: container.log },
+            logContext: {
+              type: LLM_LOG_TYPE.chatTool,
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              characterId: ctx.characterId,
+            },
             onEvent: debug ? (ev) => events.push(ev) : undefined,
           })
         : await container.provider.chat({
             ...prepared.request,
             stream: false,
           } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
-          { signal },
+          {
+            signal,
+            log: {
+              type: LLM_LOG_TYPE.chat,
+              requestId: ctx.requestId,
+              userId: ctx.userId,
+              characterId: ctx.characterId,
+            },
+          },
         );
       const assistant = res.choices[0]?.message?.content ?? "";
       await prepared.postTurn(assistant);

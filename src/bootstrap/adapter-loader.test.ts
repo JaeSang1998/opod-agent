@@ -32,7 +32,9 @@ describe("loadAdapterOverrides", () => {
     expect(importer).toHaveBeenCalledWith("@opod/postgres-adapters");
     expect(createAdapters).toHaveBeenCalledWith(env);
     expect(receivedEnv?.DATABASE_URL).toBe("postgres://db/opod");
-    expect(container).toMatchObject({ provider, personas, memory, queue });
+    expect(container).toMatchObject({ personas, memory, queue });
+    expect(container.provider).not.toBe(provider);
+    expect(container.provider.defaultModel).toBe(provider.defaultModel);
   });
 
   it("returns no overrides when no deployment module is configured", async () => {
