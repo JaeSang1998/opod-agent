@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Launch opod-agent against a local MLX (gemma) chat model + Ollama embeddings.
-#   scripts/dev-gemma.sh [start|stop|status]
+#   scripts/dev-gemma.sh [start|providers|stop|status]
 # - Ollama serves embeddings (qwen3-embedding); mlx_lm.server serves gemma chat.
+# - `providers` starts only the host-side model servers for Docker Compose.
 # - gemma is started once and left warm across opod restarts; `stop` kills it.
 set -euo pipefail
 
 # ── config (override via env) ────────────────────────────────────────────────
-GEMMA_MODEL="${GEMMA_MODEL:-mlx-community/gemma-4-31b-it-8bit}"
+GEMMA_MODEL="${GEMMA_MODEL:-llmfan46/gemma-4-31B-it-uncensored-heretic}"
 GEMMA_HOST="${GEMMA_HOST:-127.0.0.1}"
-GEMMA_PORT="${GEMMA_PORT:-8080}"
+GEMMA_PORT="${GEMMA_PORT:-8081}"
+GEMMA_CHAT_TEMPLATE_ARGS="${GEMMA_CHAT_TEMPLATE_ARGS:-{\"enable_thinking\": false}}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-qwen3-embedding:8b}"
 OPOD_PORT="${PORT:-8787}"
@@ -59,9 +61,18 @@ ensure_gemma() {
   [ -x "$MLX_SERVER" ] || { c_err "  mlx_lm.server not found at $MLX_SERVER (set MLX_SERVER)"; exit 1; }
   c_warn "  starting mlx_lm.server (model loads lazily on first chat)"
   nohup "$MLX_SERVER" --model "$GEMMA_MODEL" --host "$GEMMA_HOST" --port "$GEMMA_PORT" \
-    >"$GEMMA_LOG" 2>&1 &
+    --chat-template-args "$GEMMA_CHAT_TEMPLATE_ARGS" \
+    </dev/null >"$GEMMA_LOG" 2>&1 &
   echo $! >"$GEMMA_PID"
   wait_until "$GEMMA_URL/v1/models" "gemma server" 120 || exit 1
+}
+
+providers() {
+  echo "=== host providers for Docker ==="
+  ensure_ollama
+  ensure_gemma
+  c_ok "  Docker chat       → http://host.docker.internal:$GEMMA_PORT/v1"
+  c_ok "  Docker embeddings → http://host.docker.internal:11434/v1"
 }
 
 start() {
@@ -103,7 +114,8 @@ status() {
 
 case "${1:-start}" in
   start)  start ;;
+  providers) providers ;;
   stop)   stop ;;
   status) status ;;
-  *) echo "usage: $0 [start|stop|status]" >&2; exit 1 ;;
+  *) echo "usage: $0 [start|providers|stop|status]" >&2; exit 1 ;;
 esac

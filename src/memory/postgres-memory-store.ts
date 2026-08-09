@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
+  GrantBondInput,
   MemoryStore,
   NewMemory,
   RetrieveOptions,
   SummarySaveResult,
   SummaryWriteGuard,
 } from "./memory-store.js";
+import { nextBondState } from "./bond.js";
 import type {
   ArchivalMemory,
   CoreMemory,
@@ -31,6 +33,26 @@ const CANDIDATE_LIMIT = 512;
 
 /** Observations closer than this to an existing memory are duplicates (stub parity). */
 const DEDUP_SIMILARITY = 0.95;
+
+/**
+ * Every relationship read/RETURNING projects the same shape — kept in one place.
+ *
+ * `last_decay_at` is this service's `lastExchangeAt`: the column outlived the
+ * decaying warmth axis it was named for, and renaming it belongs to the repo
+ * that owns the schema (opod-service-backend). Nothing reads `warmth` any more.
+ */
+const RELATIONSHIP_COLUMNS = `importance_since_reflection, bond_xp, bond_level,
+   last_decay_at, daily_bond_date, daily_bond_xp, updated_at`;
+
+interface RelationshipRow {
+  importance_since_reflection: number;
+  bond_xp: number;
+  bond_level: number;
+  last_decay_at: Date;
+  daily_bond_date: string;
+  daily_bond_xp: number;
+  updated_at: Date;
+}
 
 interface MemoryRow {
   id: string;
@@ -206,21 +228,12 @@ export class PostgresMemoryStore implements MemoryStore {
   }
 
   async getRelationshipState(key: RelationshipKey): Promise<RelationshipState> {
-    const result = await this.pool.query<{
-      importance_since_reflection: number;
-      updated_at: Date;
-    }>(
-      `SELECT importance_since_reflection, updated_at FROM opod.agent_relationship_state
+    const result = await this.pool.query<RelationshipRow>(
+      `SELECT ${RELATIONSHIP_COLUMNS} FROM opod.agent_relationship_state
        WHERE user_id = $1 AND character_id = $2`,
       [key.userId, key.characterId],
     );
-    const row = result.rows[0];
-    return {
-      userId: key.userId,
-      characterId: key.characterId,
-      importanceSinceReflection: row?.importance_since_reflection ?? 0,
-      updatedAt: (row?.updated_at ?? this.now()).toISOString(),
-    };
+    return this.mapRelationshipRow(key, result.rows[0]);
   }
 
   async addImportance(
@@ -232,27 +245,15 @@ export class PostgresMemoryStore implements MemoryStore {
       if (operationKey) {
         const fresh = await this.claimOperation(client, key, `importance:${operationKey}`);
         if (!fresh) {
-          const state = await client.query<{
-            importance_since_reflection: number;
-            updated_at: Date;
-          }>(
-            `SELECT importance_since_reflection, updated_at FROM opod.agent_relationship_state
+          const state = await client.query<RelationshipRow>(
+            `SELECT ${RELATIONSHIP_COLUMNS} FROM opod.agent_relationship_state
              WHERE user_id = $1 AND character_id = $2`,
             [key.userId, key.characterId],
           );
-          const row = state.rows[0];
-          return {
-            userId: key.userId,
-            characterId: key.characterId,
-            importanceSinceReflection: row?.importance_since_reflection ?? 0,
-            updatedAt: (row?.updated_at ?? this.now()).toISOString(),
-          };
+          return this.mapRelationshipRow(key, state.rows[0]);
         }
       }
-      const updated = await client.query<{
-        importance_since_reflection: number;
-        updated_at: Date;
-      }>(
+      const updated = await client.query<RelationshipRow>(
         `INSERT INTO opod.agent_relationship_state
            (user_id, character_id, importance_since_reflection, updated_at)
          VALUES ($1, $2, $3, $4)
@@ -261,17 +262,92 @@ export class PostgresMemoryStore implements MemoryStore {
            importance_since_reflection =
              opod.agent_relationship_state.importance_since_reflection + EXCLUDED.importance_since_reflection,
            updated_at = EXCLUDED.updated_at
-         RETURNING importance_since_reflection, updated_at`,
+         RETURNING ${RELATIONSHIP_COLUMNS}`,
         [key.userId, key.characterId, delta, this.now()],
       );
-      const row = updated.rows[0];
-      return {
-        userId: key.userId,
-        characterId: key.characterId,
-        importanceSinceReflection: row?.importance_since_reflection ?? delta,
-        updatedAt: (row?.updated_at ?? this.now()).toISOString(),
-      };
+      return this.mapRelationshipRow(key, updated.rows[0]);
     });
+  }
+
+  async grantBond(
+    key: RelationshipKey,
+    input: GrantBondInput,
+    operationKey?: string,
+  ): Promise<RelationshipState> {
+    return this.withTransaction(async (client) => {
+      // SELECT ... FOR UPDATE, not a bare read: the level floor and the daily
+      // cap are read-modify-write, so two turns landing on the same
+      // relationship at once would otherwise both compute from the same
+      // `before` and one grade would vanish. addImportance can stay lock-free
+      // because it is a pure increment the database can do itself.
+      const existing = await client.query<RelationshipRow>(
+        `SELECT ${RELATIONSHIP_COLUMNS} FROM opod.agent_relationship_state
+         WHERE user_id = $1 AND character_id = $2 FOR UPDATE`,
+        [key.userId, key.characterId],
+      );
+      const before = this.mapRelationshipRow(key, existing.rows[0]);
+
+      if (operationKey) {
+        const fresh = await this.claimOperation(client, key, `bond:${operationKey}`);
+        if (!fresh) return before;
+      }
+
+      const next = nextBondState(
+        {
+          bondXp: before.bondXp,
+          lastExchangeAtMs: Date.parse(before.lastExchangeAt),
+          dailyBondDate: before.dailyBondDate,
+          dailyBondXp: before.dailyBondXp,
+        },
+        input,
+      );
+
+      const updated = await client.query<RelationshipRow>(
+        `INSERT INTO opod.agent_relationship_state
+           (user_id, character_id, bond_xp, bond_level, last_decay_at,
+            daily_bond_date, daily_bond_xp, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (user_id, character_id)
+         DO UPDATE SET
+           bond_xp = EXCLUDED.bond_xp,
+           bond_level = EXCLUDED.bond_level,
+           last_decay_at = EXCLUDED.last_decay_at,
+           daily_bond_date = EXCLUDED.daily_bond_date,
+           daily_bond_xp = EXCLUDED.daily_bond_xp,
+           updated_at = EXCLUDED.updated_at
+         RETURNING ${RELATIONSHIP_COLUMNS}`,
+        [
+          key.userId,
+          key.characterId,
+          next.bondXp,
+          next.bondLevel,
+          new Date(next.lastExchangeAtMs),
+          next.dailyBondDate,
+          next.dailyBondXp,
+          this.now(),
+        ],
+      );
+      return this.mapRelationshipRow(key, updated.rows[0]);
+    });
+  }
+
+  /** Absent row = a relationship that has never been written; zeroed defaults. */
+  private mapRelationshipRow(
+    key: RelationshipKey,
+    row: RelationshipRow | undefined,
+  ): RelationshipState {
+    const now = this.now();
+    return {
+      userId: key.userId,
+      characterId: key.characterId,
+      importanceSinceReflection: row?.importance_since_reflection ?? 0,
+      bondXp: row?.bond_xp ?? 0,
+      bondLevel: row?.bond_level ?? 1,
+      lastExchangeAt: (row?.last_decay_at ?? now).toISOString(),
+      dailyBondDate: row?.daily_bond_date ?? "",
+      dailyBondXp: row?.daily_bond_xp ?? 0,
+      updatedAt: (row?.updated_at ?? now).toISOString(),
+    };
   }
 
   async consumeReflectionBudget(key: RelationshipKey, threshold: number): Promise<number | null> {

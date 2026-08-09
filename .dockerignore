@@ -5,6 +5,7 @@
 .gstack
 coverage
 dist
+evals/results
 docker-compose.yml
 docker-compose.*.yml
 node_modules

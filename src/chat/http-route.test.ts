@@ -10,6 +10,7 @@ import type { LLMProvider, ProviderCallOptions } from "../provider/llm-provider.
 import { FakeProvider } from "../testing/fake-provider.js";
 import { ScriptedProvider, textTurn, toolCallTurn } from "../testing/scripted-provider.js";
 import type { AgentTool } from "../tools/index.js";
+import { BOND_XP_BY_GRADE } from "../memory/bond.js";
 const now = () => "2026-01-01T00:00:00Z";
 
 /** Assemble the real Hono app over stub stores + an injectable provider. */
@@ -399,5 +400,108 @@ describe("POST /v1/chat/completions tool-loop debug channel (x-opod-debug)", () 
 
     const json = (await res.json()) as Record<string, unknown>;
     expect("opod_debug" in json).toBe(false);
+  });
+});
+
+describe("closeness tag redaction", () => {
+  const message = { role: "user", content: "hello" };
+
+  it("keeps the tag off a streaming client and grades the turn from it", async () => {
+    const provider = new ScriptedProvider([textTurn("별 보러 갈래? [[bond:+2]]")]);
+    const { app, memory } = buildApp(provider);
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: IDENTITY,
+      body: JSON.stringify({ stream: true, messages: [message] }),
+    });
+
+    const text = await res.text();
+    expect(text).not.toContain("bond");
+    expect(reassembleSSE(text)).toBe("별 보러 갈래?");
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
+  });
+
+  it("keeps it out of a non-streaming reply, body and learning alike", async () => {
+    const provider = new ScriptedProvider([textTurn("응 나도 [[bond:+1]]")]);
+    const { app, memory, queue } = buildApp(provider);
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: IDENTITY,
+      body: JSON.stringify({ messages: [{ role: "user", content: "나는 오늘 좋아하는 사람이 생겼어" }] }),
+    });
+
+    const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion;
+    expect(json.choices[0]?.message.content).toBe("응 나도");
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[1]);
+    // What the character learns from must be the message, not the plumbing.
+    const learned = queue.enqueued[0]?.turns.find((t) => t.role === "assistant");
+    expect(String(learned?.content)).toBe("응 나도");
+  });
+
+  it("moves the bond even when the model forgets the tag", async () => {
+    const provider = new ScriptedProvider([textTurn("응")]);
+    const { app, memory } = buildApp(provider);
+
+    await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: IDENTITY,
+      body: JSON.stringify({ messages: [message] }),
+    });
+
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondXp).toBe(0);
+    expect(state.updatedAt).toBeTruthy();
+  });
+
+  it("leaves proxy traffic byte-for-byte alone", async () => {
+    // No character header: this is somebody else's passthrough request, and
+    // rewriting brackets out of it would be a bug, not a redaction.
+    const provider = new ScriptedProvider([textTurn("결과: [[bond:+2]]")]);
+    const { app } = buildApp(provider);
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [message] }),
+    });
+
+    const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion;
+    expect(json.choices[0]?.message.content).toBe("결과: [[bond:+2]]");
+  });
+});
+
+describe("closeness tag redaction, resilience", () => {
+  it("does not swallow held text when a stream ends without a finish reason", async () => {
+    class NoFinishProvider extends FakeProvider {
+      override async chatStream(): Promise<
+        AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
+      > {
+        async function* stream() {
+          for (const content of ["오늘 ", "밤에 [["]) {
+            yield {
+              id: "no-finish",
+              object: "chat.completion.chunk",
+              created: 0,
+              model: "fake-model",
+              choices: [{ index: 0, delta: { content }, finish_reason: null }],
+            } as OpenAI.Chat.Completions.ChatCompletionChunk;
+          }
+        }
+        return stream();
+      }
+    }
+
+    const { app } = buildApp(new NoFinishProvider());
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: IDENTITY,
+      body: JSON.stringify({ stream: true, messages: [{ role: "user", content: "hello" }] }),
+    });
+
+    expect(reassembleSSE(await res.text())).toBe("오늘 밤에 [[");
   });
 });

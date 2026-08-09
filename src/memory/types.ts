@@ -55,14 +55,34 @@ export interface CoreMemory {
 }
 
 /**
- * Per-relationship state backing the autonomous reflection trigger. Accumulates
- * the importance of new observations; when it crosses the threshold the Agent
- * reflects and the accumulator resets (Generative Agents' importance trigger).
+ * Per-relationship state. Carries two independent things that happen to share
+ * a row because they share a key:
+ *
+ *  - the autonomous reflection trigger — accumulates the importance of new
+ *    observations; when it crosses the threshold the Agent reflects and the
+ *    accumulator resets (Generative Agents' importance trigger);
+ *  - the Bond (see `bond.ts`) — how far this relationship has come (`bondXp`,
+ *    which a level is read off) and when they last spoke (`lastExchangeAt`,
+ *    which recency is read off).
  */
 export interface RelationshipState {
   userId: string;
   characterId: string;
   importanceSinceReflection: number;
+  /** Lifetime bond accumulator. Never drops below the floor of the level it earned. */
+  bondXp: number;
+  /** Level derived from `bondXp`, stored so other services need no copy of the table. */
+  bondLevel: number;
+  /**
+   * When they last traded messages (ISO). Recency is derived from it on read.
+   * Persisted in the `last_decay_at` column, which keeps its old name until the
+   * schema catches up in opod-service-backend.
+   */
+  lastExchangeAt: string;
+  /** Service-date (KST `YYYY-MM-DD`) the daily bond counter belongs to. */
+  dailyBondDate: string;
+  /** bondXp already granted on `dailyBondDate`. */
+  dailyBondXp: number;
   updatedAt: string;
 }
 

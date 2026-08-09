@@ -51,9 +51,19 @@ export function PromptInput({ className, children, onSubmit, ...props }: PromptI
 
     submittingRef.current = true;
     setSubmitting(true);
+    // Clear on dispatch, not on completion: onSubmit resolves only when the
+    // whole reply has finished streaming, and a local model can think for a
+    // minute — leaving the sent text sitting in the box that long reads as
+    // "the input is broken". Restored if the dispatch itself fails.
+    setText("");
     try {
       await onSubmit({ text: submitted }, event);
-      setText("");
+    } catch (error) {
+      // Give the text back rather than losing it. Not rethrown: this runs
+      // inside a React event handler where a rejection would only surface as
+      // console noise, and the chat's own error state is the visible surface.
+      setText(submitted);
+      console.error("prompt submit failed", error);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

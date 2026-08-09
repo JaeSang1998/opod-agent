@@ -8,6 +8,7 @@ import { FakeProvider } from "../testing/fake-provider.js";
 import { buildDefaultTools } from "../tools/index.js";
 import { noopLogger } from "../bootstrap/logger.js";
 import type { ChatCompletionRequest } from "../protocol/index.js";
+import { BOND_XP_BY_GRADE } from "../memory/bond.js";
 
 const config = {
   retrieveTopK: 6,
@@ -29,6 +30,12 @@ function makeService(
     config,
   );
   return { service, queue, provider, memory };
+}
+
+/** The tail message, where everything that changes per turn is injected. */
+function lastMessage(prepared: { request: { messages: unknown[] } }) {
+  const message = prepared.request.messages.at(-1) as { role: string; content: string };
+  return { role: message.role, content: String(message.content) };
 }
 
 /** Full identity — every retrieval branch (memories / core / summary) fires. */
@@ -202,7 +209,7 @@ describe("ChatService.prepare", () => {
 });
 
 describe("ChatService.prepare retrieval", () => {
-  it("recalls a seeded memory into the recall section of the system prompt", async () => {
+  it("recalls a seeded memory into the per-turn context block", async () => {
     // Seed a memory BEFORE prepare. Its embedding uses the same deterministic
     // FakeProvider algorithm; a throwaway instance keeps the service provider's
     // embedCalls clean so we can assert the query embed precisely.
@@ -216,13 +223,14 @@ describe("ChatService.prepare retrieval", () => {
     const { service, provider } = makeService(new FakeProvider(), memory);
     const prepared = await service.prepare(body, fullCtx);
 
-    const first = prepared.request.messages[0];
-    expect(first?.role).toBe("system");
-    const content = String(first?.content);
     // rankByRetrievalScore applies no similarity threshold, so the lone seeded
     // observation surfaces within topK regardless of query similarity.
-    expect(content).toContain("# Things you recall");
-    expect(content).toContain("Nova");
+    const tail = lastMessage(prepared);
+    expect(tail.role).toBe("user");
+    expect(tail.content).toContain("# Things you recall");
+    expect(tail.content).toContain("Nova");
+    // …and never in the cached prefix.
+    expect(String(prepared.request.messages[0]?.content)).not.toContain("# Things you recall");
 
     // The query embedded was the last user text of the request.
     expect(provider.embedCalls).toContainEqual(["My cat is named Nova."]);
@@ -297,10 +305,11 @@ describe("ChatService.prepare server tools", () => {
     const prepared = await service.prepare(body, { characterId: "luna", timezone: "Europe/Zurich" });
 
     expect(prepared.tools?.map((t) => t.definition.function.name)).toEqual(["get_time", "get_weather"]);
-    const sys = String(prepared.request.messages[0]?.content);
-    expect(sys).toContain("# Current moment");
-    expect(sys).toContain("Europe/Zurich");
-    expect(sys).toContain("# Your abilities");
+    // Abilities are a property of the character (cached); the clock is not.
+    expect(String(prepared.request.messages[0]?.content)).toContain("# Your abilities");
+    const tail = lastMessage(prepared);
+    expect(tail.content).toContain("# Current moment");
+    expect(tail.content).toContain("Europe/Zurich");
   });
 
   it("omits server tools (and the abilities section) when the client body supplies its own tools", async () => {
@@ -326,5 +335,115 @@ describe("ChatService.prepare server tools", () => {
     const prepared = await service.prepare(body, { characterId: "luna" });
     expect(prepared.tools).toBeUndefined();
     expect(String(prepared.request.messages[0]?.content)).not.toContain("# Your abilities");
+  });
+});
+
+describe("ChatService bond", () => {
+  it("moves the bond by the grade the reply carried", async () => {
+    const { service, memory } = makeService();
+    const prepared = await service.prepare(body, fullCtx);
+    await prepared.postTurn("고양이 이름 예쁘다", 2);
+
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
+  });
+
+  it("counts a missing grade as neutral rather than skipping the turn", async () => {
+    // A model that forgot its tag must not leave the character acting distant:
+    // the write is also what records that they spoke just now.
+    const { service, memory } = makeService();
+    const before = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await (await service.prepare(body, fullCtx)).postTurn("응");
+
+    const after = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(after.bondXp).toBe(0);
+    expect(Date.parse(after.lastExchangeAt)).toBeGreaterThan(Date.parse(before.lastExchangeAt));
+  });
+
+  it("grades a retried turn only once", async () => {
+    const { service, memory } = makeService();
+    await (await service.prepare(body, fullCtx)).postTurn("응", 2);
+    await (await service.prepare(body, fullCtx)).postTurn("응", 2);
+
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
+  });
+
+  it("asks for a closing tag on persona turns only", async () => {
+    const { service } = makeService();
+    expect((await service.prepare(body, fullCtx)).expectsBondSignal).toBe(true);
+    expect((await service.prepare(body, {})).expectsBondSignal).toBe(false);
+    // No identity means no relationship to grade, so nothing to strip either.
+    expect((await service.prepare(body, { characterId: "luna" })).expectsBondSignal).toBe(false);
+  });
+
+  it("still answers when the bond write fails", async () => {
+    class FailingBondStore extends StubMemoryStore {
+      override async grantBond(): Promise<never> {
+        throw new Error("grantBond boom");
+      }
+    }
+    const { service, queue } = makeService(new FakeProvider(), new FailingBondStore());
+    await expect((await service.prepare(body, fullCtx)).postTurn("응", 1)).resolves.toBeUndefined();
+    expect(queue.enqueued).toHaveLength(1);
+  });
+
+  it("opens new behaviour in the prompt once the level rises", async () => {
+    const memory = new StubMemoryStore();
+    let now = Date.parse("2026-08-02T05:00:00Z");
+    const service = new ChatService(
+      new FakeProvider(),
+      new StubPersonaStore(),
+      memory,
+      new StubJobQueue(),
+      config,
+      noopLogger,
+      [],
+      () => new Date(now),
+    );
+
+    // Three days of warm conversation. It takes days rather than turns because
+    // the daily cap is what stops a level being bought in one evening.
+    for (let day = 0; day < 3; day += 1) {
+      for (let turn = 0; turn < 4; turn += 1) {
+        const ctx = { ...fullCtx, turnId: `d${day}-t${turn}` };
+        await (await service.prepare(body, ctx)).postTurn("응", 2);
+      }
+      now += 24 * 60 * 60 * 1000;
+    }
+
+    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
+    expect(state.bondLevel).toBe(2);
+
+    const tail = lastMessage(await service.prepare(body, fullCtx));
+    expect(tail.content).toContain("What that lets you do now:");
+    expect(tail.content).toContain("Use their name");
+  });
+
+  it("leaves the cached prefix untouched while the turn context moves", async () => {
+    // The reason the unlocks are injected at runtime at all: the system prompt
+    // is the prefix every Provider caches, so it has to be byte-identical from
+    // one turn to the next even as the clock, the memory and the level change.
+    const memory = new StubMemoryStore();
+    let now = Date.parse("2026-08-02T05:00:00Z");
+    const service = new ChatService(
+      new FakeProvider(),
+      new StubPersonaStore(),
+      memory,
+      new StubJobQueue(),
+      config,
+      noopLogger,
+      [],
+      () => new Date(now),
+    );
+
+    const first = await service.prepare(body, fullCtx);
+    await first.postTurn("응", 2);
+    now += 3 * 24 * 60 * 60 * 1000; // a different clock, a different recency
+    const second = await service.prepare(body, { ...fullCtx, turnId: "turn-2" });
+
+    expect(second.request.messages[0]?.content).toBe(first.request.messages[0]?.content);
+    expect(lastMessage(second).content).not.toBe(lastMessage(first).content);
   });
 });

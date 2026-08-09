@@ -40,6 +40,38 @@ describe("PromptInput", () => {
     );
   });
 
+  it("clears the box on dispatch, not when the reply finishes streaming", async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const onSubmit = vi.fn(() => pending);
+    const view = renderPrompt(onSubmit);
+    const textarea = view.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    const form = textarea.closest("form");
+    if (!form) throw new Error("Prompt textarea must belong to a form");
+
+    fireEvent.change(textarea, { target: { value: "hello" } });
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(textarea.value).toBe(""));
+    expect(onSubmit).toHaveBeenCalledWith({ text: "hello" }, expect.anything());
+    finish();
+  });
+
+  it("restores the text when the dispatch itself fails", async () => {
+    const onSubmit = vi.fn(() => Promise.reject(new Error("transport down")));
+    const view = renderPrompt(onSubmit);
+    const textarea = view.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+    const form = textarea.closest("form");
+    if (!form) throw new Error("Prompt textarea must belong to a form");
+
+    fireEvent.change(textarea, { target: { value: "hello" } });
+    fireEvent.submit(form);
+
+    await waitFor(() => expect(textarea.value).toBe("hello"));
+  });
+
   it("coalesces rapid submits while the first submit is pending", async () => {
     let finish!: () => void;
     const pending = new Promise<void>((resolve) => {
@@ -53,6 +85,9 @@ describe("PromptInput", () => {
 
     fireEvent.change(textarea, { target: { value: "hello" } });
     fireEvent.submit(form);
+    // The box is already empty here, so re-type before the second submit —
+    // otherwise the empty-text guard, not the in-flight guard, is what's tested.
+    fireEvent.change(textarea, { target: { value: "hello again" } });
     fireEvent.submit(form);
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -61,9 +96,10 @@ describe("PromptInput", () => {
     );
 
     finish();
-    await waitFor(() => expect((textarea as HTMLTextAreaElement).value).toBe(""));
-    expect((view.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled).toBe(
-      false,
+    await waitFor(() =>
+      expect(
+        (view.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
     );
   });
 });

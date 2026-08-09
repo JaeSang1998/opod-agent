@@ -10,7 +10,9 @@ must keep working.
 
 ## Decision
 
-- **Time is injected into the system prompt every turn**, not merely exposed as a tool. Grounding the
+- **Time is injected into the prompt every turn**, not merely exposed as a tool. (Originally into the
+  system prompt; ADR 0007 moved it to the per-turn block at the tail, unchanged in every other respect.)
+  Grounding the
   clock unconditionally anchors *all* time-sensitive talk — greetings, "it's getting late", "next week" —
   not just explicit time questions. The user's zone rides in the `X-Opod-Timezone` header, consistent with
   ADR 0003; the body stays 100% standard OpenAI.

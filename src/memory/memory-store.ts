@@ -8,6 +8,7 @@ import type {
   Summary,
 } from "./types.js";
 import type { RetrievalWeights } from "./retrieval.js";
+import type { BondGrade } from "./bond.js";
 
 export type { RelationshipKey } from "./types.js";
 
@@ -33,6 +34,13 @@ export interface SummaryWriteGuard {
 }
 
 export type SummarySaveResult = "saved" | "duplicate" | "conflict";
+
+export interface GrantBondInput {
+  /** How the character graded the exchange it just had (`bond.ts`). */
+  grade: BondGrade;
+  /** Wall-clock instant of the grant; anchors recency and the service day. */
+  nowMs: number;
+}
 
 /**
  * Data-access seam for memory (docs/adr/0002, 0005). Default (stub) is in-memory;
@@ -67,6 +75,9 @@ export interface MemoryStore {
   getCoreMemory(key: RelationshipKey): Promise<CoreMemory | null>;
   saveCoreMemory(core: CoreMemory, operationKey?: string): Promise<void>;
 
+  /** Current relationship row (reflection accumulator + bond), zeroed when absent. */
+  getRelationshipState(key: RelationshipKey): Promise<RelationshipState>;
+
   /**
    * Reflection-trigger accumulator (Generative Agents). Add the importance of the
    * newly stored observations, then atomically try to consume a reflection budget.
@@ -74,6 +85,20 @@ export interface MemoryStore {
   addImportance(
     key: RelationshipKey,
     delta: number,
+    operationKey?: string,
+  ): Promise<RelationshipState>;
+
+  /**
+   * Move the Bond for one graded exchange (see `bond.ts`).
+   *
+   * Read-modify-write in one transaction because every part depends on the
+   * stored row: the level floor a dip cannot cross, and the day's remaining
+   * allowance. `operationKey` makes a retried turn a no-op — the same exchange
+   * must never be graded twice.
+   */
+  grantBond(
+    key: RelationshipKey,
+    input: GrantBondInput,
     operationKey?: string,
   ): Promise<RelationshipState>;
   /**

@@ -98,9 +98,11 @@ opod-worker ──HTTP──▶ opod-agent /v1/chat/completions
                           │  1. load published Persona   (PersonaStore)
                           │  2. retrieve Archival Memory (MemoryStore)
                           │  3. + rolling Summary
-                          │  4. assemble system prompt
+                          │  4. assemble the cached system prompt (character only)
+                          │     + a per-turn context block at the tail (ADR 0007)
                           │  5. call LLMProvider (OpenAI / Ollama)
-                          │  6. autonomously judge → enqueue memory-update job
+                          │  6. strip the closing Bond tag → move the Bond
+                          │  7. autonomously judge → enqueue memory-update job
                           ▼
                        reply (JSON or SSE)
 
@@ -168,4 +170,13 @@ request cancellation/correlation, and can point at any opod-agent deployment thr
 | `npm run test:coverage` | root suite with enforced 90% line / 80% branch floor |
 | `npm run typecheck:web` | strict Next.js playground typecheck |
 | `npm run test:web` | playground route/SSE/contract/IME tests with enforced coverage floors |
+| `npm run eval:validate` | validate the eight H30 long-conversation fixtures without model calls |
+| `npm run eval:smoke` | run a short two-scenario connectivity check (not an H30 certificate) |
+| `npm run eval:long` | run the full 8 × 24-exchange H30 suite with LLM judging |
+| `npm run eval:confidence` | repeat every H30 scenario three times and gate release on per-scenario variance |
+| `npm run eval:harbor:validate` | validate the local task against pinned Harbor 0.20.0 |
+| `npm run test:eval:coverage` | run H30 contract tests with false-certificate coverage floors |
 | `npm run check` | full local quality gate used by CI |
+
+The operational definition, scoring gates, scenarios, ATIF artifacts, and Harbor wrapper are documented
+in [docs/long-conversation-eval.md](./docs/long-conversation-eval.md) and [evals/README.md](./evals/README.md).

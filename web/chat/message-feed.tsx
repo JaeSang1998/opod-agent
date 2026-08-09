@@ -13,10 +13,10 @@ import type { ToolPart } from "./tool-events";
 import type { UIMessage } from "ai";
 
 export function MessageFeed({
-  characterId,
+  characterLabel,
   messages,
 }: {
-  characterId: string;
+  characterLabel: string;
   messages: UIMessage[];
 }) {
   return (
@@ -25,8 +25,8 @@ export function MessageFeed({
         {messages.length === 0 ? (
           <ConversationEmptyState
             description={
-              characterId
-                ? `Talking to "${characterId}" with memory retrieval enabled.`
+              characterLabel
+                ? `Talking to "${characterLabel}" with memory retrieval enabled.`
                 : "No character set — plain OpenAI-compatible proxy."
             }
             title="No messages yet"

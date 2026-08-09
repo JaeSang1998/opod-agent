@@ -1,0 +1,35 @@
+schema_version = "1.3"
+
+[task]
+name = "opod/h30-long-conversation"
+description = "Verifier-driven wrapper for eight 24-exchange character-chat trajectories"
+keywords = ["conversation", "long-horizon", "memory", "llm-judge"]
+
+[agent]
+timeout_sec = 30.0
+
+[verifier]
+timeout_sec = 7200.0
+environment_mode = "shared"
+
+[verifier.env]
+LLM_BASE_URL = "${LLM_BASE_URL}"
+LLM_MODEL = "${LLM_MODEL}"
+LLM_API_KEY = "${LLM_API_KEY:-}"
+EMBEDDING_MODEL = "${EMBEDDING_MODEL:-text-embedding-3-small}"
+EMBEDDING_BASE_URL = "${EMBEDDING_BASE_URL:-}"
+EMBEDDING_API_KEY = "${EMBEDDING_API_KEY:-}"
+EVAL_SIMULATOR_BASE_URL = "${EVAL_SIMULATOR_BASE_URL:-}"
+EVAL_SIMULATOR_MODEL = "${EVAL_SIMULATOR_MODEL:-}"
+EVAL_SIMULATOR_API_KEY = "${EVAL_SIMULATOR_API_KEY:-}"
+EVAL_JUDGE_BASE_URL = "${EVAL_JUDGE_BASE_URL:-}"
+EVAL_JUDGE_MODEL = "${EVAL_JUDGE_MODEL:-}"
+EVAL_JUDGE_API_KEY = "${EVAL_JUDGE_API_KEY:-}"
+
+[environment]
+docker_image = "opod-agent-eval:local"
+workdir = "/app"
+network_mode = "public"
+cpus = 4
+memory_mb = 4096
+storage_mb = 10240

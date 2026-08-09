@@ -12,6 +12,9 @@ export const PlaygroundChatRequest = z.object({
   historyOffset: z.number().int().nonnegative().default(0),
   maxTokens: z.number().int().positive().max(32_768).default(1024),
   messages: z.array(UIMessage).min(1),
+  // Forwarded verbatim as OpenAI's `reasoning_effort`; Ollama maps it onto the
+  // model's thinking level and "none" disables thinking altogether.
+  reasoningEffort: z.enum(["none", "low", "medium", "high"]).optional(),
   sessionId: z.string().optional(),
   temperature: z.number().min(0).max(2).default(0.7),
   timezone: z.string().min(1).max(64).optional(),

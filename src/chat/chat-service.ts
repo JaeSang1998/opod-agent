@@ -5,13 +5,15 @@ import type { PersonaStore } from "../persona/persona-store.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { JobQueue } from "../memory/job-queue.js";
 import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
-import { lastUserText } from "../openai/messages.js";
+import { lastUserText, withTurnContext } from "../openai/messages.js";
 import type { ArchivalMemory, CoreMemory, Summary } from "../memory/types.js";
+import { type BondGrade, type BondSnapshot, bondSnapshot } from "../memory/bond.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";
 import { type Logger, noopLogger } from "../bootstrap/logger.js";
 import type { AgentTool } from "../tools/index.js";
 import { decideConsolidation } from "./consolidation-policy.js";
 import { assembleSystemPrompt } from "./system-prompt.js";
+import { assembleTurnContext } from "./turn-context.js";
 
 export interface ChatContext {
   characterId?: string;
@@ -33,10 +35,21 @@ export interface ChatServiceConfig {
 export interface PreparedTurn {
   /** The provider request with the persona/memory system prompt prepended. */
   request: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParams, "stream">;
-  /** Run after the reply is known: enqueue the per-turn consolidation job. */
-  postTurn(assistantContent: string): Promise<void>;
+  /**
+   * Run after the reply is known: move the Bond by the grade the character
+   * reported and enqueue the per-turn consolidation job. `assistantContent`
+   * must already have the closeness tag stripped out of it.
+   */
+  postTurn(assistantContent: string, grade?: BondGrade | null): Promise<void>;
   /** Present only when the server-side tool loop should run for this turn. */
   tools?: AgentTool[];
+  /**
+   * True when the prompt asked for a closing closeness tag, and therefore when
+   * the transport must redact one out of the reply. False for proxy turns,
+   * whose bytes are passed through untouched (docs/adr/0003) — stripping a
+   * bracket sequence out of somebody else's passthrough traffic would be a bug.
+   */
+  expectsBondSignal: boolean;
 }
 
 /**
@@ -72,6 +85,7 @@ export class ChatService {
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
         postTurn: async () => {},
+        expectsBondSignal: false,
       };
     }
 
@@ -87,31 +101,48 @@ export class ChatService {
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
         postTurn: async () => {},
+        expectsBondSignal: false,
       };
     }
 
     const lastUser = lastUserText(messages);
-    const [memories, core, summary] = await Promise.all([
+    const [memories, core, summary, bond] = await Promise.all([
       this.retrieveMemories(ctx, lastUser, signal),
       this.getCore(ctx),
       this.getSummary(ctx),
+      this.getBond(ctx),
     ]);
 
     // Client-supplied tools mean pure passthrough (docs/adr/0003): the server tool
     // loop only runs for persona turns whose body carries no tools of its own.
     const serverToolsActive = this.tools.length > 0;
+    // Identity, not a loaded snapshot: a store hiccup must not flip the system
+    // prompt for one turn and cost the prefix cache with it.
+    const tracksBond = Boolean(ctx.userId && ctx.characterId);
 
+    // Two halves, split by how often they change (docs/adr/0007). The system
+    // prompt is the character and holds still, so every Provider between here
+    // and the GPU can keep it cached; everything that moves per turn — clock,
+    // bond, memory, summary — is appended to the last user message, behind the
+    // whole unchanged history.
     const systemPrompt = assembleSystemPrompt({
       persona,
-      memories,
-      core,
-      summary,
-      now: this.clock(),
-      timezone: ctx.timezone,
       toolsEnabled: serverToolsActive,
       toolNames: serverToolsActive ? this.tools.map((t) => t.definition.function.name) : undefined,
+      tracksBond,
     });
-    const augmented: ChatMessage[] = [{ role: "system", content: systemPrompt }, ...messages];
+    const turnContext = assembleTurnContext({
+      bond,
+      core,
+      summary,
+      memories,
+      now: this.clock(),
+      timezone: ctx.timezone,
+    });
+    const augmented: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      ...withTurnContext(messages, turnContext),
+    ];
 
     return {
       request: {
@@ -120,9 +151,17 @@ export class ChatService {
         messages: augmented as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
         stream: undefined,
       } as PreparedTurn["request"],
-      postTurn: (assistantContent) =>
-        this.enqueueConsolidation(ctx, messages, assistantContent, summary),
+      postTurn: async (assistantContent, grade) => {
+        // Independent of each other: the Bond must move on every exchange,
+        // while Consolidation skips the ones with nothing to learn from.
+        await Promise.all([
+          this.grantBond(ctx, grade ?? null),
+          this.enqueueConsolidation(ctx, messages, assistantContent, summary),
+        ]);
+      },
       tools: serverToolsActive ? this.tools : undefined,
+      // Exactly when the prompt carries the rule that asks for the tag.
+      expectsBondSignal: tracksBond,
     };
   }
 
@@ -163,6 +202,61 @@ export class ChatService {
     } catch (err) {
       this.log.warn("core memory fetch failed; continuing without it", { err: String(err) });
       return null;
+    }
+  }
+
+  /**
+   * Pure read — recency is derived from the stored last-exchange stamp rather
+   * than recomputed and written back, so the chat hot path stays read-only. A
+   * store failure degrades to no bond section at all, which reads as a neutral
+   * first meeting; that is a better failure than guessing at a closeness we
+   * can't verify.
+   */
+  private async getBond(ctx: ChatContext): Promise<BondSnapshot | null> {
+    if (!ctx.userId || !ctx.characterId) return null;
+    try {
+      const state = await this.memory.getRelationshipState({
+        userId: ctx.userId,
+        characterId: ctx.characterId,
+      });
+      return bondSnapshot(
+        { bondXp: state.bondXp, lastExchangeAtMs: Date.parse(state.lastExchangeAt) },
+        this.clock().getTime(),
+      );
+    } catch (err) {
+      this.log.warn("relationship state fetch failed; continuing without bond", {
+        err: String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Move the Bond by the grade the character reported for this exchange.
+   *
+   * A missing grade counts as 0, never as a skip: the write is also what marks
+   * the relationship as touched just now, and a model that forgot its tag must
+   * not leave the character acting distant with someone it was mid-conversation
+   * with. `turnId` gates it because the operation key is what makes a retried
+   * turn idempotent — without one, a client retry would grade the same exchange
+   * twice.
+   */
+  private async grantBond(ctx: ChatContext, grade: BondGrade | null): Promise<void> {
+    if (!ctx.userId || !ctx.characterId || !ctx.turnId) return;
+    if (grade === null) {
+      this.log.debug("no closeness grade in reply; treating as neutral", {
+        requestId: ctx.requestId,
+      });
+    }
+    try {
+      await this.memory.grantBond(
+        { userId: ctx.userId, characterId: ctx.characterId },
+        { grade: grade ?? 0, nowMs: this.clock().getTime() },
+        `${ctx.sessionId ?? ""}:${ctx.turnId}`,
+      );
+    } catch (err) {
+      // A relationship that failed to move is not a failed reply.
+      this.log.warn("bond grant failed", { err: String(err), requestId: ctx.requestId });
     }
   }
 

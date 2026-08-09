@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { lastUserMessage, lastUserText, transcriptOf } from "./messages.js";
+import { lastUserMessage, lastUserText, transcriptOf, withTurnContext } from "./messages.js";
 import type { ChatMessage } from "../protocol/index.js";
 
 describe("lastUserMessage", () => {
@@ -101,5 +101,41 @@ describe("transcriptOf", () => {
 
   it("returns an empty string for an empty messages array", () => {
     expect(transcriptOf([])).toBe("");
+  });
+});
+
+describe("withTurnContext", () => {
+  const block = "<context>\n\n# Current moment\nIt is late.\n\n</context>";
+
+  it("appends the block to the last user message", () => {
+    const messages: ChatMessage[] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+    ];
+    const out = withTurnContext(messages, block);
+    expect(out[2]?.content).toBe(`second\n\n${block}`);
+    // Everything before it is byte-identical, which is the point: the prefix
+    // through the whole history stays cached.
+    expect(out.slice(0, 2)).toEqual(messages.slice(0, 2));
+  });
+
+  it("never mutates the caller's array — Consolidation learns from that one", () => {
+    const messages: ChatMessage[] = [{ role: "user", content: "hello" }];
+    const out = withTurnContext(messages, block);
+    expect(messages[0]?.content).toBe("hello");
+    expect(out).not.toBe(messages);
+  });
+
+  it("returns the messages untouched when there is no block", () => {
+    const messages: ChatMessage[] = [{ role: "user", content: "hello" }];
+    expect(withTurnContext(messages, null)).toBe(messages);
+  });
+
+  it("carries the block on its own message when no user turn exists", () => {
+    const messages: ChatMessage[] = [{ role: "assistant", content: "unprompted" }];
+    const out = withTurnContext(messages, block);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual({ role: "user", content: block });
   });
 });

@@ -3,6 +3,7 @@
   "files": {
     "includes": [
       "src/**/*.ts",
+      "evals/**/*.ts",
       "web/**/*.ts",
       "web/**/*.tsx",
       "!web/.next",

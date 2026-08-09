@@ -1,0 +1,68 @@
+name: H30 long-conversation eval
+
+on:
+  pull_request:
+    paths:
+      - "evals/**"
+      - "docker/Dockerfile.eval"
+      - "package.json"
+      - "tsconfig.evals.json"
+      - "vitest.evals.config.ts"
+      - ".github/workflows/long-conversation-eval.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Evaluation depth
+        required: true
+        default: confidence
+        type: choice
+        options:
+          - standard
+          - confidence
+
+concurrency:
+  group: h30-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      LLM_BASE_URL: ${{ vars.OPOD_EVAL_LLM_BASE_URL }}
+      LLM_MODEL: ${{ vars.OPOD_EVAL_LLM_MODEL }}
+      LLM_API_KEY: ${{ secrets.OPOD_EVAL_LLM_API_KEY }}
+      EMBEDDING_BASE_URL: ${{ vars.OPOD_EVAL_EMBEDDING_BASE_URL || vars.OPOD_EVAL_LLM_BASE_URL }}
+      EMBEDDING_MODEL: ${{ vars.OPOD_EVAL_EMBEDDING_MODEL || 'text-embedding-3-small' }}
+      EMBEDDING_API_KEY: ${{ secrets.OPOD_EVAL_EMBEDDING_API_KEY || secrets.OPOD_EVAL_LLM_API_KEY }}
+      EVAL_SIMULATOR_BASE_URL: ${{ vars.OPOD_EVAL_SIMULATOR_BASE_URL }}
+      EVAL_SIMULATOR_MODEL: ${{ vars.OPOD_EVAL_SIMULATOR_MODEL }}
+      EVAL_SIMULATOR_API_KEY: ${{ secrets.OPOD_EVAL_SIMULATOR_API_KEY }}
+      EVAL_JUDGE_BASE_URL: ${{ vars.OPOD_EVAL_JUDGE_BASE_URL }}
+      EVAL_JUDGE_MODEL: ${{ vars.OPOD_EVAL_JUDGE_MODEL }}
+      EVAL_JUDGE_API_KEY: ${{ secrets.OPOD_EVAL_JUDGE_API_KEY }}
+      EVAL_RESULTS_DIR: evals/results/github
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: touch .env
+      - run: npm run eval:validate
+      - run: npm run test:eval:coverage
+      - run: npm run eval:harbor:validate
+      - name: Run H30 suite
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run eval:${{ inputs.profile == 'standard' && 'long' || 'confidence' }}
+      - name: Upload trajectories and scores
+        if: ${{ github.event_name == 'workflow_dispatch' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: h30-${{ inputs.profile }}-${{ github.run_id }}
+          path: evals/results/github
+          if-no-files-found: error
+          retention-days: 30

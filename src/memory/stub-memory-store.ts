@@ -1,10 +1,12 @@
 import type {
+  GrantBondInput,
   MemoryStore,
   NewMemory,
   RetrieveOptions,
   SummarySaveResult,
   SummaryWriteGuard,
 } from "./memory-store.js";
+import { nextBondState } from "./bond.js";
 import type {
   CoreMemory,
   ArchivalMemory,
@@ -42,6 +44,7 @@ export class StubMemoryStore implements MemoryStore {
   private readonly summaryOperations = new Map<string, Set<string>>();
   private readonly memoryOperations = new Map<string, ArchivalMemory[]>();
   private readonly importanceOperations = new Set<string>();
+  private readonly bondOperations = new Set<string>();
   private readonly coreOperations = new Set<string>();
   private seq = 0;
   private readonly now: () => string;
@@ -126,15 +129,24 @@ export class StubMemoryStore implements MemoryStore {
     if (operationId) this.coreOperations.add(operationId);
   }
 
+  /** Zeroed defaults for a relationship that has never been written. */
+  private blankState(key: RelationshipKey): RelationshipState {
+    const now = this.now();
+    return {
+      userId: key.userId,
+      characterId: key.characterId,
+      importanceSinceReflection: 0,
+      bondXp: 0,
+      bondLevel: 1,
+      lastExchangeAt: now,
+      dailyBondDate: "",
+      dailyBondXp: 0,
+      updatedAt: now,
+    };
+  }
+
   async getRelationshipState(key: RelationshipKey): Promise<RelationshipState> {
-    const state =
-      this.states.get(relKey(key)) ?? {
-        userId: key.userId,
-        characterId: key.characterId,
-        importanceSinceReflection: 0,
-        updatedAt: this.now(),
-      };
-    return structuredClone(state);
+    return structuredClone(this.states.get(relKey(key)) ?? this.blankState(key));
   }
 
   async addImportance(
@@ -146,13 +158,7 @@ export class StubMemoryStore implements MemoryStore {
     if (operationId && this.importanceOperations.has(operationId)) {
       return this.getRelationshipState(key);
     }
-    const current =
-      this.states.get(relKey(key)) ?? {
-        userId: key.userId,
-        characterId: key.characterId,
-        importanceSinceReflection: 0,
-        updatedAt: this.now(),
-      };
+    const current = this.states.get(relKey(key)) ?? this.blankState(key);
     const next: RelationshipState = {
       ...current,
       importanceSinceReflection: current.importanceSinceReflection + delta,
@@ -164,17 +170,49 @@ export class StubMemoryStore implements MemoryStore {
   }
 
   /**
+   * Read-modify-write standing in for the Postgres adapter's `FOR UPDATE`
+   * transaction. Single-threaded here, so no lock is needed — but the shared
+   * `nextBondState` keeps the policy identical to production.
+   */
+  async grantBond(
+    key: RelationshipKey,
+    input: GrantBondInput,
+    operation?: string,
+  ): Promise<RelationshipState> {
+    const operationId = operation ? operationKey(key, `bond:${operation}`) : null;
+    if (operationId && this.bondOperations.has(operationId)) {
+      return this.getRelationshipState(key);
+    }
+    const current = this.states.get(relKey(key)) ?? this.blankState(key);
+    const grant = nextBondState(
+      {
+        bondXp: current.bondXp,
+        lastExchangeAtMs: Date.parse(current.lastExchangeAt),
+        dailyBondDate: current.dailyBondDate,
+        dailyBondXp: current.dailyBondXp,
+      },
+      input,
+    );
+    const next: RelationshipState = {
+      ...current,
+      bondXp: grant.bondXp,
+      bondLevel: grant.bondLevel,
+      lastExchangeAt: new Date(grant.lastExchangeAtMs).toISOString(),
+      dailyBondDate: grant.dailyBondDate,
+      dailyBondXp: grant.dailyBondXp,
+      updatedAt: this.now(),
+    };
+    this.states.set(relKey(key), next);
+    if (operationId) this.bondOperations.add(operationId);
+    return structuredClone(next);
+  }
+
+  /**
    * Guarded read-modify-write standing in for the Postgres adapter's atomic
    * `UPDATE ... RETURNING`. Subtracts (never zeroes) so overflow carries forward.
    */
   async consumeReflectionBudget(key: RelationshipKey, threshold: number): Promise<number | null> {
-    const current =
-      this.states.get(relKey(key)) ?? {
-        userId: key.userId,
-        characterId: key.characterId,
-        importanceSinceReflection: 0,
-        updatedAt: this.now(),
-      };
+    const current = this.states.get(relKey(key)) ?? this.blankState(key);
     const before = current.importanceSinceReflection;
     if (before < threshold) return null;
     this.states.set(relKey(key), {

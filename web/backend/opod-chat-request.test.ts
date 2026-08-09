@@ -27,6 +27,29 @@ describe("opod chat request bridge", () => {
     expect(request.messages).toEqual([{ role: "assistant", content: "Visible answer" }]);
   });
 
+  it("pins the sampling preset and sends both spellings of the thinking switch", () => {
+    const base = {
+      characterId: "luna",
+      messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+    };
+
+    const off = toOpodChatRequest(
+      PlaygroundChatRequest.parse({ ...base, reasoningEffort: "none" }),
+    );
+    expect(off).toMatchObject({
+      top_p: 0.95,
+      top_k: 64,
+      chat_template_kwargs: { enable_thinking: false },
+      reasoning_effort: "none",
+    });
+
+    const on = toOpodChatRequest(PlaygroundChatRequest.parse({ ...base, reasoningEffort: "low" }));
+    expect(on).toMatchObject({
+      chat_template_kwargs: { enable_thinking: true },
+      reasoning_effort: "low",
+    });
+  });
+
   it("uses the shared identity and correlation header names", () => {
     const input = PlaygroundChatRequest.parse({
       characterId: "luna",
