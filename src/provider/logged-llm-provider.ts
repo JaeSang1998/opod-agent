@@ -12,6 +12,7 @@ type JsonObject = Record<string, unknown>;
 interface StartedLog {
   id: bigint;
   redactedPaths: string[];
+  startedAt: number;
 }
 
 interface FinishLog {
@@ -24,6 +25,15 @@ interface FinishLog {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  responseModel?: string;
+  usageJson?: unknown;
+  finishReason?: string;
+  timeToFirstTokenMs?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  cost?: number;
+  upstreamCost?: number;
 }
 
 export interface LlmLogStore {
@@ -102,6 +112,15 @@ export class PostgresLlmLogStore implements LlmLogStore {
               input_tokens = $6,
               output_tokens = $7,
               total_tokens = $8,
+              response_model = $9,
+              usage_json = $10::jsonb,
+              finish_reason = $11,
+              time_to_first_token_ms = $12,
+              cached_input_tokens = $13,
+              cache_write_tokens = $14,
+              reasoning_tokens = $15,
+              cost = $16,
+              upstream_cost = $17,
               completed_at = clock_timestamp()
         WHERE id = $1`,
       [
@@ -113,6 +132,15 @@ export class PostgresLlmLogStore implements LlmLogStore {
         result.inputTokens ?? null,
         result.outputTokens ?? null,
         result.totalTokens ?? null,
+        result.responseModel ?? null,
+        toJson(result.usageJson ?? null),
+        result.finishReason ?? null,
+        result.timeToFirstTokenMs ?? null,
+        result.cachedInputTokens ?? null,
+        result.cacheWriteTokens ?? null,
+        result.reasoningTokens ?? null,
+        result.cost ?? null,
+        result.upstreamCost ?? null,
       ],
     );
   }
@@ -198,14 +226,21 @@ export class LoggedLlmProvider implements LLMProvider {
     return (async function* () {
       const accumulator = new StreamCompletionAccumulator();
       let finished = false;
+      let timeToFirstTokenMs: number | undefined;
       try {
         for await (const chunk of stream) {
+          if (timeToFirstTokenMs === undefined && hasGeneratedOutput(chunk)) {
+            timeToFirstTokenMs = Math.max(0, Date.now() - started.startedAt);
+          }
           accumulator.add(chunk);
           yield chunk;
         }
         finished = true;
         const response = accumulator.value();
-        await self.finish(started, response, usageOf(response));
+        await self.finish(started, response, {
+          ...usageOf(response),
+          timeToFirstTokenMs,
+        });
       } catch (error) {
         finished = true;
         await self.fail(started, error);
@@ -243,7 +278,7 @@ export class LoggedLlmProvider implements LLMProvider {
       requestJson: requestPayload.value,
       redactedPaths,
     });
-    const started = { id, redactedPaths };
+    const started = { id, redactedPaths, startedAt: Date.now() };
 
     try {
       const result = this.provider.embedWithResponse
@@ -313,7 +348,7 @@ export class LoggedLlmProvider implements LLMProvider {
       requestJson: requestPayload.value,
       redactedPaths,
     });
-    return { id, redactedPaths };
+    return { id, redactedPaths, startedAt: Date.now() };
   }
 
   private async finish(
@@ -323,12 +358,20 @@ export class LoggedLlmProvider implements LLMProvider {
     additionalRedactedPaths: string[] = [],
   ): Promise<void> {
     const redacted = redactLlmPayload(response, "$.response");
+    const { usageJson, ...metrics } = usage;
+    const redactedUsage =
+      usageJson === undefined ? null : redactLlmPayload(usageJson, "$.usage");
     try {
       await this.store.succeed(started, {
         responseJson: redacted.value,
-        redactedPaths: uniquePaths(redacted.redactedPaths, additionalRedactedPaths),
+        redactedPaths: uniquePaths(
+          redacted.redactedPaths,
+          redactedUsage?.redactedPaths,
+          additionalRedactedPaths,
+        ),
         providerRequestId: providerRequestIdOf(response),
-        ...usage,
+        ...metrics,
+        ...(redactedUsage ? { usageJson: redactedUsage.value } : {}),
       });
     } catch (error) {
       this.config.onFinishWriteError?.(error);
@@ -480,13 +523,61 @@ function usageOf(value: unknown): {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  responseModel?: string;
+  usageJson?: unknown;
+  finishReason?: string;
+  timeToFirstTokenMs?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  cost?: number;
+  upstreamCost?: number;
 } {
-  const usage = (value as { usage?: Record<string, unknown> } | null)?.usage;
-  if (!usage) return {};
+  const response = value as {
+    model?: unknown;
+    usage?: Record<string, unknown>;
+    choices?: { finish_reason?: unknown }[];
+  } | null;
+  const usage = response?.usage;
+  const responseModel = stringOf(response?.model);
+  const finishReason = stringOf(response?.choices?.[0]?.finish_reason);
+  if (!usage) return { responseModel, finishReason };
   const input = numberOf(usage.prompt_tokens ?? usage.input_tokens);
   const output = numberOf(usage.completion_tokens ?? usage.output_tokens);
   const total = numberOf(usage.total_tokens) ?? ((input ?? 0) + (output ?? 0) || undefined);
-  return { inputTokens: input, outputTokens: output, totalTokens: total };
+  const inputDetails = recordOf(usage.prompt_tokens_details ?? usage.input_tokens_details);
+  const outputDetails = recordOf(
+    usage.completion_tokens_details ?? usage.output_tokens_details,
+  );
+  const costDetails = recordOf(usage.cost_details);
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens: total,
+    responseModel,
+    usageJson: usage,
+    finishReason,
+    cachedInputTokens: numberOf(inputDetails?.cached_tokens),
+    cacheWriteTokens: numberOf(inputDetails?.cache_write_tokens),
+    reasoningTokens: numberOf(outputDetails?.reasoning_tokens),
+    cost: numberOf(usage.cost),
+    upstreamCost: numberOf(costDetails?.upstream_inference_cost),
+  };
+}
+
+function hasGeneratedOutput(chunk: OpenAI.Chat.Completions.ChatCompletionChunk): boolean {
+  return chunk.choices.some((choice) => {
+    const delta = choice.delta as { content?: unknown; reasoning?: unknown; tool_calls?: unknown };
+    return Boolean(delta.content || delta.reasoning || delta.tool_calls);
+  });
+}
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return isJsonObject(value) ? value : undefined;
+}
+
+function stringOf(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function providerRequestIdOf(value: unknown): string | undefined {
