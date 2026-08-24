@@ -19,7 +19,6 @@ describe("buildContainer adapter seam", () => {
 
     const container = buildContainer(loadEnv({
       OPOD_WORKER_TOKEN: "a-very-long-worker-token",
-      STORE_DRIVER: "postgres",
     }), {
       provider,
       personas,
@@ -34,22 +33,9 @@ describe("buildContainer adapter seam", () => {
     expect(container.queue).toBe(queue);
   });
 
-  it("names the missing adapters for an unknown non-stub store driver", () => {
-    expect(() =>
-      buildContainer(loadEnv({
-        OPOD_WORKER_TOKEN: "a-very-long-worker-token",
-        STORE_DRIVER: "dynamo",
-      }), {
-        provider: new FakeProvider(),
-        log: noopLogger,
-      }),
-    ).toThrow("needs injected PersonaStore, MemoryStore, and JobQueue adapters");
-  });
-
-  it("wires built-in Postgres persistence for STORE_DRIVER=postgres", () => {
+  it("wires built-in Postgres persistence whenever DATABASE_URL is configured", () => {
     const container = buildContainer(loadEnv({
       OPOD_WORKER_TOKEN: "a-very-long-worker-token",
-      STORE_DRIVER: "postgres",
       DATABASE_URL: "postgresql://user:pw@localhost:5433/db",
     }), {
       provider: new FakeProvider(),
@@ -61,17 +47,6 @@ describe("buildContainer adapter seam", () => {
     expect(container.queue).toBeInstanceOf(PostgresJobQueue);
   });
 
-  it("refuses STORE_DRIVER=postgres without a DATABASE_URL", () => {
-    expect(() =>
-      buildContainer(loadEnv({
-        OPOD_WORKER_TOKEN: "a-very-long-worker-token",
-        STORE_DRIVER: "postgres",
-      }), {
-        provider: new FakeProvider(),
-        log: noopLogger,
-      }),
-    ).toThrow('STORE_DRIVER="postgres" requires DATABASE_URL');
-  });
 });
 
 describe("buildContainer tools", () => {

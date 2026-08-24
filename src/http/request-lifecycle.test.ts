@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { LlmConfigUnavailableError } from "../provider/db-settings-provider.js";
 import { classifyRequestError, createRequestSignal } from "./request-lifecycle.js";
 
 async function waitForAbort(signal: AbortSignal): Promise<unknown> {
@@ -38,6 +39,14 @@ describe("request lifecycle", () => {
       message: "internal server error",
       status: 500,
       type: "server_error",
+    });
+  });
+
+  it("maps unavailable DB LLM settings to a non-leaking 503", () => {
+    expect(classifyRequestError(new LlmConfigUnavailableError("secret DB detail"))).toEqual({
+      message: "LLM configuration unavailable",
+      status: 503,
+      type: "llm_config_unavailable",
     });
   });
 });

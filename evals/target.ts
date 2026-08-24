@@ -56,7 +56,6 @@ class InProcessTarget implements ConversationTarget {
   constructor(env: NodeJS.ProcessEnv) {
     const loaded = loadEnv({
       ...env,
-      STORE_DRIVER: "stub",
       DATABASE_URL: undefined,
       OPOD_ADAPTER_MODULE: undefined,
       OPOD_WORKER_TOKEN: undefined,

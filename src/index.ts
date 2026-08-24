@@ -13,10 +13,8 @@ container.consolidationWorker?.start();
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   container.log.info(`opod-agent listening on :${info.port}`, {
-    provider: env.LLM_BASE_URL,
-    model: env.LLM_MODEL,
-    store: env.STORE_DRIVER,
-    personas: env.DATABASE_URL ? "postgres" : "stub",
+    llmSettings: "database",
+    persistence: env.DATABASE_URL ? "postgres" : "stub",
     memoryWorker: container.consolidationWorker ? "in-process" : "off",
   });
 });
