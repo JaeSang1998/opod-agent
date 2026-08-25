@@ -33,7 +33,7 @@ export interface Container {
   queue: JobQueue;
   chat: ChatService;
   consolidation: ConsolidationService;
-  /** Present only under the builtin postgres driver with the worker enabled. */
+  /** Present when Postgres is configured and the worker is enabled. */
   consolidationWorker?: ConsolidationWorker;
   tools: AgentTool[];
   log: Logger;
@@ -53,31 +53,14 @@ export interface ContainerOverrides {
 }
 
 /**
- * Wires the object graph from env. Built-in persistence defaults to in-memory
- * adapters; non-stub deployments load concrete adapters here (docs/adr/0002).
+ * Wires the object graph. DATABASE_URL selects the built-in Postgres adapters;
+ * explicit test/deployment overrides still take precedence.
  */
 export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Container {
   const log = overrides.log ?? createLogger(env.LOG_LEVEL);
-  // STORE_DRIVER="postgres" is a built-in: persona, memory, and queue all ride
-  // one shared pool onto the OPOD Postgres (docs/adr/0002 Resolution +
-  // docs/persona-memory-plan.md Phase 3). Any other non-stub driver still
-  // requires a full injected adapter set.
   const suppliedPersistence = [overrides.personas, overrides.memory, overrides.queue];
   const hasAllPersistenceAdapters = suppliedPersistence.every(Boolean);
-  // A fully injected adapter set always wins; builtin requirements then don't apply.
-  const builtinPostgres = env.STORE_DRIVER === "postgres" && !hasAllPersistenceAdapters;
-  if (builtinPostgres && !env.DATABASE_URL) {
-    throw new Error('STORE_DRIVER="postgres" requires DATABASE_URL.');
-  }
-  if (
-    env.STORE_DRIVER !== "stub" &&
-    env.STORE_DRIVER !== "postgres" &&
-    !hasAllPersistenceAdapters
-  ) {
-    throw new Error(
-      `STORE_DRIVER="${env.STORE_DRIVER}" needs injected PersonaStore, MemoryStore, and JobQueue adapters.`,
-    );
-  }
+  const builtinPostgres = Boolean(env.DATABASE_URL) && !hasAllPersistenceAdapters;
 
   // An idle client's connection dying (DB restart, failover, network reset)
   // surfaces as a pool-level 'error' event; with no listener Node escalates it
@@ -92,47 +75,48 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
   };
   const pool = builtinPostgres && env.DATABASE_URL ? trackedPool("store") : null;
   const llmLogPool = env.DATABASE_URL ? (pool ?? trackedPool("llm-log")) : null;
+  const logStore = llmLogPool
+    ? new PostgresLlmLogStore(llmLogPool)
+    : new UnavailableLlmLogStore();
+  const logConfig = (baseUrl: string, embeddingBaseUrl: string, embeddingModel: string) => ({
+    provider: "openai-compatible",
+    chatEndpoint: `${baseUrl.replace(/\/$/, "")}/chat/completions`,
+    embeddingEndpoint: `${embeddingBaseUrl.replace(/\/$/, "")}/embeddings`,
+    embeddingModel,
+    onFinishWriteError: (error: unknown) =>
+      log.error("failed to finalize LLM log", { err: String(error) }),
+  });
 
-  const providerEnvConfig = {
-    baseUrl: env.LLM_BASE_URL,
-    apiKey: env.LLM_API_KEY,
-    model: env.LLM_MODEL,
-    embeddingModel: env.EMBEDDING_MODEL,
-    embeddingBaseUrl: env.EMBEDDING_BASE_URL,
-    embeddingApiKey: env.EMBEDDING_API_KEY,
-  };
-  // Under the postgres driver, chat-LLM config comes from the admin console
-  // (agent.* with per-field planner.* inheritance) and re-resolves on a TTL —
-  // env stays the bootstrap fallback. Elsewhere env is the whole config.
-  const rawProvider =
-    overrides.provider ??
-    (pool
-      ? new DbSettingsProvider(pool, providerEnvConfig, log)
-      : new OpenAICompatProvider(providerEnvConfig));
-
-  // Logging wraps whichever provider was chosen, so DB-resolved config is
-  // logged the same as env-resolved config.
-  const provider =
-    overrides.provider && !llmLogPool
-      ? rawProvider
-      : new LoggedLlmProvider(
-          rawProvider,
-          llmLogPool
-            ? new PostgresLlmLogStore(llmLogPool)
-            : new UnavailableLlmLogStore(),
-          {
-            provider: "openai-compatible",
-            chatEndpoint: `${env.LLM_BASE_URL.replace(/\/$/, "")}/chat/completions`,
-            embeddingEndpoint: `${(env.EMBEDDING_BASE_URL ?? env.LLM_BASE_URL).replace(/\/$/, "")}/embeddings`,
-            embeddingModel: env.EMBEDDING_MODEL,
-            onFinishWriteError: (error) =>
-              log.error("failed to finalize LLM log", { err: String(error) }),
+  const provider = overrides.provider
+    ? llmLogPool
+      ? new LoggedLlmProvider(
+          overrides.provider,
+          logStore,
+          logConfig("injected://provider", "injected://provider", "injected"),
+        )
+      : overrides.provider
+    : new DbSettingsProvider(
+        llmLogPool ?? {
+          query: async () => {
+            throw new Error("DATABASE_URL is not configured");
           },
-        );
+        },
+        log,
+        (config) => {
+          const raw = new OpenAICompatProvider(config);
+          return new LoggedLlmProvider(
+            raw,
+            logStore,
+            logConfig(
+              config.baseUrl,
+              config.embeddingBaseUrl ?? "unconfigured://embedding",
+              config.embeddingModel,
+            ),
+          );
+        },
+      );
 
-  // Personas read the live OPOD rows whenever a DATABASE_URL is present — the
-  // built-in default (docs/adr/0002). Memory/queue persist only under the
-  // postgres driver; on stub they stay in-memory (lost on restart).
+  // All built-in persistence becomes durable together when DATABASE_URL exists.
   const personas =
     overrides.personas ??
     (pool
@@ -189,8 +173,7 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     reflectionThreshold: env.REFLECTION_IMPORTANCE_THRESHOLD,
   });
 
-  // The durable queue only exists under the builtin postgres driver; there the
-  // Agent hosts the consolidation consumer in-process (Phase 4). The caller
+  // With a durable queue the Agent hosts the consolidation consumer in-process. The caller
   // (index.ts) starts/stops it around the HTTP server's lifetime.
   const consolidationWorker =
     pool && env.MEMORY_WORKER_ENABLED

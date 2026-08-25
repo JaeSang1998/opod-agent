@@ -1,11 +1,10 @@
 import { z } from "zod";
 
 /**
- * All runtime configuration is env-driven. The LLM_* variables point the
- * OpenAI-compatible adapter at either OpenAI or a local provider (Ollama, vLLM,
- * LM Studio, MLX). Embeddings can be split onto a separate endpoint via
- * EMBEDDING_BASE_URL when the chat Provider can't serve them (e.g. an MLX chat
- * model + Ollama embeddings) — see docs/adr/0001 and CONTEXT.md.
+ * Product LLM settings are resolved from admin_settings by DbSettingsProvider.
+ * The LLM_* and EMBEDDING_* fields remain here only for the isolated evaluation
+ * harness, which constructs its provider explicitly and never participates in
+ * product request handling.
  */
 const EnvSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
@@ -48,23 +47,21 @@ const EnvSchema = z.object({
   WEB_SEARCH_BASE_URL: z.string().url().default("https://api.tavily.com"),
 
   // In-process consolidation worker (docs/persona-memory-plan.md Phase 4).
-  // Runs only under the postgres store driver, where the durable queue lives.
+  // Runs only with built-in Postgres persistence, where the durable queue lives.
   MEMORY_WORKER_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   MEMORY_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),
   MEMORY_WORKER_LEASE_MS: z.coerce.number().int().positive().default(120_000),
   MEMORY_WORKER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
   MEMORY_WORKER_RETRY_DELAY_MS: z.coerce.number().int().positive().default(30_000),
 
-  // Any non-stub name is allowed; deployment modules own vendor-specific setup.
-  STORE_DRIVER: z.string().min(1).default("stub"),
   DATABASE_URL: z.string().optional(),
   OPOD_ADAPTER_MODULE: z.string().min(1).optional(),
   OPOD_WORKER_TOKEN: z.string().min(16).optional(),
 }).superRefine((env, ctx) => {
-  if (env.STORE_DRIVER !== "stub" && !env.OPOD_WORKER_TOKEN) {
+  if (env.DATABASE_URL && !env.OPOD_WORKER_TOKEN) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "OPOD_WORKER_TOKEN is required for non-stub persistence",
+      message: "OPOD_WORKER_TOKEN is required when DATABASE_URL is configured",
       path: ["OPOD_WORKER_TOKEN"],
     });
   }

@@ -1,7 +1,13 @@
+import { LlmConfigUnavailableError } from "../provider/db-settings-provider.js";
+
 export interface ClassifiedRequestError {
   message: string;
-  status: 408 | 500 | 504;
-  type: "request_cancelled" | "server_error" | "timeout_error";
+  status: 408 | 500 | 503 | 504;
+  type:
+    | "llm_config_unavailable"
+    | "request_cancelled"
+    | "server_error"
+    | "timeout_error";
 }
 
 /** One cancellation signal for client disconnect and the configured deadline. */
@@ -22,6 +28,13 @@ function errorName(error: unknown): string | undefined {
 
 /** Convert internal/provider errors into the only safe HTTP error variants. */
 export function classifyRequestError(error: unknown): ClassifiedRequestError {
+  if (error instanceof LlmConfigUnavailableError) {
+    return {
+      message: "LLM configuration unavailable",
+      status: 503,
+      type: "llm_config_unavailable",
+    };
+  }
   const name = errorName(error);
   if (name === "TimeoutError") {
     return { message: "upstream request timed out", status: 504, type: "timeout_error" };

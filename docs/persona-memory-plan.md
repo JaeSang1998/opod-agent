@@ -93,8 +93,8 @@ canon) / `auto:` 역반영(최근 N개만 "최근 근황" 섹션) 분리 + LLM �
 - `consumeReflectionBudget`: 원자적 compare-and-consume (동시 잡 2개가 같은
   임계값을 둘 다 넘지 못하게) — 인터페이스 주석의 요구 그대로.
 - `saveSummary`: revision CAS + 멱등키 기록을 한 트랜잭션에.
-- 배선: 페르소나와 같은 패턴의 빌트인 어댑터로 — `DATABASE_URL` 있으면
-  `STORE_DRIVER=postgres`에서 자동 구성 (OPOD_ADAPTER_MODULE 외부 주입 불필요).
+- 배선: 페르소나와 같은 패턴의 빌트인 어댑터로 — `DATABASE_URL`이 있으면
+  자동 구성 (OPOD_ADAPTER_MODULE 외부 주입 불필요).
   `OPOD_WORKER_TOKEN`(consolidation 엔드포인트 인증) 설정 필요.
 
 **작업 순서 (완료)**: ① service-backend 마이그레이션 → ② agent 어댑터+

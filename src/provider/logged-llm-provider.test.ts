@@ -47,7 +47,15 @@ function completion(): OpenAI.Chat.Completions.ChatCompletion {
         message: { role: "assistant", content: "hello", refusal: null },
       },
     ],
-    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+    usage: {
+      prompt_tokens: 3,
+      completion_tokens: 2,
+      total_tokens: 5,
+      prompt_tokens_details: { cached_tokens: 2, cache_write_tokens: 1 },
+      completion_tokens_details: { reasoning_tokens: 1 },
+      cost: 0.00012,
+      cost_details: { upstream_inference_cost: 0.0001 },
+    } as OpenAI.CompletionUsage,
   };
 }
 
@@ -95,6 +103,42 @@ describe("LoggedLlmProvider", () => {
       }),
     ).resolves.toMatchObject({ id: "chatcmpl-1" });
     expect(onFinishWriteError).toHaveBeenCalledOnce();
+  });
+
+  it("preserves raw usage and normalizes response, cache, reasoning, and cost metrics", async () => {
+    const store = new TestStore();
+
+    await logged(baseProvider(), store).chat({ model: "requested-model", messages: [] });
+
+    expect(store.succeeded[0]).toMatchObject({
+      responseModel: "test-model",
+      finishReason: "stop",
+      inputTokens: 3,
+      outputTokens: 2,
+      totalTokens: 5,
+      cachedInputTokens: 2,
+      cacheWriteTokens: 1,
+      reasoningTokens: 1,
+      cost: 0.00012,
+      upstreamCost: 0.0001,
+      usageJson: { prompt_tokens_details: { cached_tokens: 2 } },
+    });
+  });
+
+  it("redacts secret-shaped provider extensions in raw usage", async () => {
+    const store = new TestStore();
+    const response = completion() as OpenAI.Chat.Completions.ChatCompletion & {
+      usage: OpenAI.CompletionUsage & { api_key: string };
+    };
+    response.usage.api_key = "provider-secret";
+
+    await logged(baseProvider({ chat: vi.fn().mockResolvedValue(response) }), store).chat({
+      model: "requested-model",
+      messages: [],
+    });
+
+    expect(store.succeeded[0]?.usageJson).toMatchObject({ api_key: "[REDACTED]" });
+    expect(store.succeeded[0]?.redactedPaths).toContain("$.usage.api_key");
   });
 
   it("records embedding dimensions without persisting raw vectors", async () => {
@@ -161,6 +205,11 @@ describe("LoggedLlmProvider", () => {
       choices: [{ message: { content: "hello" }, finish_reason: "stop" }],
       usage: { total_tokens: 3 },
     });
+    expect(store.succeeded[0]).toMatchObject({
+      responseModel: "test-model",
+      finishReason: "stop",
+      timeToFirstTokenMs: expect.any(Number),
+    });
   });
 
   it("redacts metadata and signed endpoint query values before insertion", async () => {
@@ -224,7 +273,7 @@ describe("PostgresLlmLogStore", () => {
 
     expect(id).toBe(42n);
     await store.succeed(
-      { id, redactedPaths: ["$.request.apiKey"] },
+      { id, redactedPaths: ["$.request.apiKey"], startedAt: Date.now() },
       {
         responseJson: { id: "chat-1" },
         redactedPaths: ["$.response.secret"],
@@ -233,10 +282,19 @@ describe("PostgresLlmLogStore", () => {
         inputTokens: 2,
         outputTokens: 3,
         totalTokens: 5,
+        responseModel: "response-model",
+        usageJson: { total_tokens: 5 },
+        finishReason: "stop",
+        timeToFirstTokenMs: 12,
+        cachedInputTokens: 1,
+        cacheWriteTokens: 2,
+        reasoningTokens: 3,
+        cost: 0.001,
+        upstreamCost: 0.0008,
       },
     );
     await store.fail(
-      { id, redactedPaths: [] },
+      { id, redactedPaths: [], startedAt: Date.now() },
       Object.assign(new Error("Bearer hidden-token"), {
         status: 429,
         request_id: "provider-2",

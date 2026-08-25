@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import { baseUrlFrom, DbSettingsProvider } from "./db-settings-provider.js";
 import { noopLogger } from "../bootstrap/logger.js";
+import { FakeProvider } from "../testing/fake-provider.js";
+import type { ProviderConfig } from "./openai-compat-provider.js";
+import {
+  baseUrlFrom,
+  DbSettingsProvider,
+  LlmConfigUnavailableError,
+} from "./db-settings-provider.js";
 
-const ENV_CONFIG = {
-  baseUrl: "https://env.example/v1",
-  apiKey: "env-key",
-  model: "env-model",
-  embeddingModel: "env-embed",
-};
+const COMPLETE_SETTINGS = [
+  { key: "planner.llmApiUrl", value: "https://planner.test/v1/chat/completions" },
+  { key: "planner.llmApiKey", value: "planner-key" },
+  { key: "planner.llmModel", value: "planner-model" },
+  { key: "agent.llmModel", value: "chat-model" },
+  { key: "agent.embeddingApiUrl", value: "https://embed.test/v1/embeddings" },
+  { key: "agent.embeddingApiKey", value: "embed-key" },
+  { key: "agent.embeddingModel", value: "embed-model" },
+];
 
 function fakePool(rows: () => { key: string; value: string }[]) {
   const calls = { count: 0 };
@@ -18,55 +27,84 @@ function fakePool(rows: () => { key: string; value: string }[]) {
       return { rows: rows() };
     },
   };
-  return { pool: pool as unknown as Pool, calls };
+  return { pool: pool as unknown as Pick<Pool, "query">, calls };
+}
+
+function providerWithCapturedConfig(configs: ProviderConfig[]) {
+  return (config: ProviderConfig) => {
+    configs.push(config);
+    const provider = new FakeProvider();
+    Object.defineProperty(provider, "defaultModel", { value: config.model });
+    return provider;
+  };
 }
 
 describe("DbSettingsProvider", () => {
-  it("normalizes a stored chat-completions URL to a base URL", () => {
-    expect(baseUrlFrom("https://api.openai.com/v1/chat/completions")).toBe(
-      "https://api.openai.com/v1",
+  it("normalizes stored operation URLs to OpenAI client base URLs", () => {
+    expect(baseUrlFrom("https://api.test/v1/chat/completions", "chat/completions")).toBe(
+      "https://api.test/v1",
     );
-    expect(baseUrlFrom("https://api.openai.com/v1/")).toBe("https://api.openai.com/v1");
+    expect(baseUrlFrom("https://api.test/v1/embeddings", "embeddings")).toBe(
+      "https://api.test/v1",
+    );
   });
 
-  it("prefers agent.* overrides, inherits planner.* per field, falls back to env, and refreshes on TTL", async () => {
-    let settings = [
-      { key: "planner.llmApiUrl", value: "https://llm.test/v1/chat/completions" },
-      { key: "planner.llmApiKey", value: "planner-key" },
-      { key: "planner.llmModel", value: "planner-model" },
-      { key: "agent.llmModel", value: "chat-model" },
-    ];
-    let clock = 0;
-    const { pool, calls } = fakePool(() => settings);
+  it("rejects malformed or mismatched DB API URLs as unavailable configuration", () => {
+    expect(() => baseUrlFrom("not-a-url", "chat/completions")).toThrow(
+      LlmConfigUnavailableError,
+    );
+    expect(() => baseUrlFrom("https://api.test/v1/embeddings", "chat/completions")).toThrow(
+      LlmConfigUnavailableError,
+    );
+  });
+
+  it("uses DB-only chat settings and a separately configured embedding endpoint and key", async () => {
+    const configs: ProviderConfig[] = [];
+    const { pool, calls } = fakePool(() => COMPLETE_SETTINGS);
     const provider = new DbSettingsProvider(
-      pool,
-      ENV_CONFIG,
+      pool as unknown as Pick<Pool, "query">,
       noopLogger,
-      1_000,
-      () => clock,
+      providerWithCapturedConfig(configs),
     );
 
-    // 모델만 오버라이드 → 키·URL은 planner 상속 (ex.1 시나리오).
-    await provider.embed([]).catch(() => undefined);
-    expect(provider.defaultModel).toBe("chat-model");
+    await provider.embed(["memory"]);
+
     expect(calls.count).toBe(1);
+    expect(configs).toEqual([
+      {
+        baseUrl: "https://planner.test/v1",
+        apiKey: "planner-key",
+        model: "chat-model",
+        embeddingBaseUrl: "https://embed.test/v1",
+        embeddingApiKey: "embed-key",
+        embeddingModel: "embed-model",
+      },
+    ]);
+  });
 
-    // TTL 안에서는 재조회하지 않는다.
-    clock = 500;
-    await provider.embed([]).catch(() => undefined);
-    expect(calls.count).toBe(1);
+  it("rejects incomplete DB settings instead of falling back to environment defaults", async () => {
+    const { pool } = fakePool(() => []);
+    const provider = new DbSettingsProvider(pool, noopLogger);
 
-    // TTL이 지나면 재조회하고, 별도 키를 넣는 순간(ex.2) 그 키가 적용된다.
-    settings = [...settings, { key: "agent.llmApiKey", value: "chat-key" }];
-    clock = 1_500;
-    await provider.embed([]).catch(() => undefined);
-    expect(calls.count).toBe(2);
-    expect(provider.defaultModel).toBe("chat-model");
+    await expect(provider.embed([])).rejects.toBeInstanceOf(LlmConfigUnavailableError);
+  });
 
-    // DB 행이 전부 사라지면 env 폴백으로 복귀한다.
-    settings = [];
-    clock = 3_000;
-    await provider.embed([]).catch(() => undefined);
-    expect(provider.defaultModel).toBe("env-model");
+  it("fails closed after a DB lookup error instead of using the last successful provider", async () => {
+    let fail = false;
+    const pool = {
+      async query() {
+        if (fail) throw new Error("database unavailable");
+        return { rows: COMPLETE_SETTINGS };
+      },
+    };
+    const provider = new DbSettingsProvider(
+      pool as unknown as Pick<Pool, "query">,
+      noopLogger,
+      providerWithCapturedConfig([]),
+    );
+
+    await expect(provider.embed([])).resolves.toEqual([]);
+    fail = true;
+    await expect(provider.embed([])).rejects.toBeInstanceOf(LlmConfigUnavailableError);
   });
 });

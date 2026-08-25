@@ -112,9 +112,8 @@ opod-worker ──(memory-update job)──▶ opod-agent /memory/consolidate  (
 ## Persistence
 
 Persona / Memory / Job-queue access sits behind `PersonaStore`, `MemoryStore`, and `JobQueue`
-interfaces. `STORE_DRIVER=stub` (default) uses in-memory implementations so the full path runs
-today; the **Postgres + pgvector** adapters land once the shared schema is confirmed
-(see [ADR-0002](./docs/adr/0002-store-abstraction-direct-postgres-pgvector.md)).
+interfaces. `DATABASE_URL` automatically enables the built-in Postgres persona,
+memory, and queue implementations; DB-less tests use in-memory stores.
 
 ## Connecting another LLM Provider or database
 
@@ -123,7 +122,6 @@ and `npm start` entrypoints can load a deployment-owned module, so connecting a 
 require a second application entrypoint:
 
 ```env
-STORE_DRIVER=postgres
 DATABASE_URL=postgres://user:pass@localhost:5432/opod
 OPOD_ADAPTER_MODULE=./deployment/adapters.js
 OPOD_WORKER_TOKEN=replace-with-a-long-random-token
