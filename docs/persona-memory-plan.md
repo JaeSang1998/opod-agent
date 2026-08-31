@@ -66,7 +66,7 @@ canon) / `auto:` 역반영(최근 N개만 "최근 근황" 섹션) 분리 + LLM �
 - E2E 검증 완료: 대화 → 관찰 2건+요약 저장 → 프로세스 재시작 → 새 세션에서
   회상 성공.
 
-**스키마 (opod-service-backend prisma, 확장 불필요)** — 코드 계약
+**스키마 (opod-service-backend Drizzle, 확장 불필요)** — 코드 계약
 (`memory/types.ts`, `memory-store.ts`, `job-queue.ts`)을 그대로 매핑한 6테이블
 (마이그레이션 `agent_relationship_memory` + `agent_memory_job_relationship`):
 
