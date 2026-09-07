@@ -26,7 +26,26 @@ npm run eval:memory-structure
 
 # P1-1 공용 Persona Router: 동일 문맥의 legacy control / routed candidate 구조 A/B
 npm run eval:persona-router
+
+# 승인된 Persona 원문 구간을 실험 입력에서만 분리. 모델·DB 호출 없음
+EVAL_PERSONA_INPUT=/absolute/path/to/control-personas.json \
+  EVAL_PERSONA_PROJECTION=/absolute/path/to/source-projection.json \
+  npm run eval:persona-projection
 ```
+
+`eval:persona-projection`은 기존 `Persona[]` JSON과 내용 없는 구간 계획을 읽는다. 계획은
+`schemaVersion: 1`, `offsetUnit: "utf8_bytes"`, `sources` 배열이며, 각 source는 `blockId`,
+원문 `sourceSha256`, `fragments`를 가진다. 각 fragment는 `startByte/endByte`, 기존
+`kind/injection` 값을 명시한다. 원문 전체를 빈틈·중복 없이 나눠야 하며 SHA-256 불일치와
+UTF-8 문자 중간 경계는 실패한다. 계획에 없는 블록·examples·canon은 그대로 유지한다.
+구간에는 원본 ID·hash·byte 범위에 기반한 ID를 부여하고 내용 없는 `sourceSpans`를 별도로 남긴다.
+포함 정책은 기존 `routePersona`를 사용하며 제품 Store나 실제 서비스 설정은 변경하지 않는다.
+
+출력은 새 `EVAL_RESULTS_DIR` 또는 기본 ignored `evals/results/persona-projection-.../`에
+`projected-personas.json`(원문 포함)과 `projection-report.json`(출처·구조 probe)을 저장한다.
+출력 디렉터리는 새로 생성하며 기존 디렉터리·파일을 덮어쓰지 않는다. 디렉터리 권한은 0700,
+파일은 0600이다. 실제 원문·구간 계획·출력은 git에 넣지 않는다. optional source가 0개인 조건과
+모두 선택된 조건은 배치 검증용이며 실제 selector·모델 품질·전체 Persona routing 완료를 뜻하지 않는다.
 
 `eval:validate`와 `test:eval*`에서 쓰는 fixture/test double은 schema와 집계기의 false-pass 방지용일
 뿐 대화 품질 실행으로 세지 않는다. 품질 근거는 실제 candidate, simulator, judge endpoint를 호출해
