@@ -20,8 +20,8 @@ describe("PostgresPersonaStore", () => {
     const { pool, calls } = fakePool({
       "opod.characters": [{ id: "c1", display_name: "한소이", bio: "필름 카메라로 계절을 줍는 사람" }],
       "opod.character_personas": [
-        { title: "성격", content: "내향적 관찰자" },
-        { title: "말투와 문체 가이드", content: "짧은 시적 문장" },
+        { id: "p1", title: "성격", content: "내향적 관찰자" },
+        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장" },
       ],
       "opod.character_memories": [{ content: "2021년 12월 Canon AE-1을 샀다" }],
     });
@@ -33,8 +33,8 @@ describe("PostgresPersonaStore", () => {
       name: "한소이",
       bio: "필름 카메라로 계절을 줍는 사람",
       blocks: [
-        { title: "성격", content: "내향적 관찰자" },
-        { title: "말투와 문체 가이드", content: "짧은 시적 문장" },
+        { id: "p1", title: "성격", content: "내향적 관찰자" },
+        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장" },
       ],
       canonMemories: ["2021년 12월 Canon AE-1을 샀다"],
     });
@@ -44,6 +44,7 @@ describe("PostgresPersonaStore", () => {
     expect(blockCall?.params).toEqual(["c1"]);
     expect(blockCall?.sql).toContain("deleted_at IS NULL");
     expect(blockCall?.sql).toContain("sort_order ASC");
+    expect(blockCall?.sql).toContain("SELECT id, title, content");
   });
 
   it("returns null when the character does not exist", async () => {

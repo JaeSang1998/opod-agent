@@ -17,16 +17,188 @@ npm run eval:long
 
 # release confidence: H30 전체를 scenario당 3회
 npm run eval:confidence
+
+# 공통 자연스러움 진단: 모든 runtime character × 8 scenario × 12 exchanges
+EVAL_CHARACTER_SET_PATH=/absolute/path/to/character-set.json npm run eval:naturalness
+
+# P1-0 공용 메모리 구조: 실제 in-process Store seed + 회수/제외/주입 provenance
+npm run eval:memory-structure
+
+# P1-1 공용 Persona Router: 동일 문맥의 legacy control / routed candidate 구조 A/B
+npm run eval:persona-router
 ```
 
 `eval:validate`와 `test:eval*`에서 쓰는 fixture/test double은 schema와 집계기의 false-pass 방지용일
 뿐 대화 품질 실행으로 세지 않는다. 품질 근거는 실제 candidate, simulator, judge endpoint를 호출해
 생성된 `eval:long`/`eval:confidence` trajectory artifact뿐이다.
 
+## P1-0 공용 메모리 구조 probe
+
+`eval:memory-structure`는 대화 자연스러움을 채점하는 명령이 아니다. 특정 캐릭터의 Persona나 말투와
+무관하게, 합성 사용자 메모리 8건을 실제 `StubMemoryStore`에 넣고 첫 고정 발화를 embedding한 뒤 현재
+검색기가 어떤 ID를 선택·제외했으며 어떤 ID가 turn context에 들어갔는지 검증한다. fixture에는
+`active`, `stale`, `superseded`, `forgotten` archival label과 `active`, `expired` current-state label이
+모두 있다. 출력 provenance에는 메모리 원문이나 사용자 발화가 아니라 ID, 종류, 순위, 점수,
+선택·제외 사유, 주입 여부만 남는다.
+
+Suite mode도 별도 `structure`로 기록한다. 따라서 구조 preflight가 성공해도 품질 필드인
+`qualityPassed`, `passed`, `certificationEligible`은 모두 `false`이며 자연스러움 PASS로 승격되지 않는다.
+
+이 기본 명령은 응답 문장 품질과 무관한 구조 검사를 재현 가능하게 만들기 위해 deterministic test
+provider의 embedding과 짧은 합성 응답을 사용한다. 다만 `ChatService` → 실제 retrieval scorer →
+`StubMemoryStore` → turn-context 조립 → HTTP 응답 debug의 제품 경로는 그대로 통과한다. 따라서 이
+결과를 실제 모델의 대화 품질 근거로 사용해서는 안 된다. `DATABASE_URL`은 명시적으로 무시하므로
+개발 DB dump를 만들거나 운영·개발 DB에 쓰지 않으며, 각 trajectory의 격리된 in-process Store만
+변경한다. `EVAL_TARGET_URL`이 설정된 원격 target과 runtime character-set은 fixture 오염을 피하려고
+실행 전에 거부한다. 내장 Luna Persona는 HTTP prompt 경로를 통과시키는 합성 harness일 뿐이며,
+fixture와 판정 조건에는 Luna 설정이나 특정 운영 캐릭터 정보가 없다.
+
+구조 preflight는 다음 중 하나라도 만족하지 못하면 nonzero exit로 끝난다: 모든 record seed,
+probe turn의 provenance 존재, 검색 후보 1건 이상, 실제 주입 1건 이상, top-K 제외 후보 1건 이상,
+예상한 현재 record의 주입. 결과는 `suite-report.json`의 각 trajectory 아래
+`memoryFixture.preflight`에서 확인한다. `memoryFixture.policyExpectationsPassed`는 별도 정보다. P1-0의
+`baseline_unfiltered`는 lifecycle label을 일부러 저장 필터로 사용하지 않으므로, 과거·정정·삭제
+record 제외 기대는 현재 `false`일 수 있다. 그 실패를 숨기지 않고 P1-2 Memory Gate 전후 비교의
+기준선으로 보존한다. Current-state record는 P1-3 계약을 미리 선언하지만 P1-0에서는 아직 주입하지
+않는다.
+
 `eval:smoke|long|confidence`는 `.env`를 읽는다. Candidate는 기존 `LLM_*`/`EMBEDDING_*` 설정을
 사용한다. simulator와 judge는 `EVAL_SIMULATOR_*`, `EVAL_JUDGE_*`로 분리하는 것을 권장한다. 값이
 없으면 judge, 그 다음 candidate 설정으로 fallback하므로 로컬 연결 확인은 한 endpoint로도 가능하지만
 동일 모델 self-judge 결과는 release 근거로 삼지 않는다.
+
+## P1-1 Persona Router 구조 A/B
+
+`eval:persona-router`는 서로 다른 내용과 제목을 가진 합성 Persona 2개에 동일한 3턴 사용자 문맥을
+적용한다. Control은 매핑 없는 legacy Store, Candidate는 block ID 기반 explicit read adapter를 거쳐
+`always/start_only/retrieved/never_prompt`로 나뉜다. fixture의 단순 문자열 rule은 `retrieved` 채널의
+배관을 재현하기 위한 test-only selector이며 실제 relevance 알고리즘이 아니다.
+
+결과는 JSON과 정적 HTML로 함께 생성한다. 각 source가 `system_prompt`, `turn_context`, `excluded` 중
+어디에 있었는지 실제 조립된 prompt와 content-free provenance를 대조하고, 동적 Persona가 바뀌어도
+stable prompt hash가 유지되는지 검사한다. 실제 모델 답변을 생성하지 않으므로 보고서의
+`qualityPassed`, `passed`, `certificationEligible`은 항상 `false`다. 구조 통과를 대화 자연스러움
+PASS로 해석하면 안 된다.
+
+## 공통 자연스러움 진단
+
+`eval:naturalness`는 특정 캐릭터용 suite가 아니다. 동일한 8개 시나리오를 실행 시점에 전달한
+캐릭터 집합 전체에 교차 실행한다. 코드와 공통 fixture에는 운영 캐릭터 ID, 이름, 말버릇이나
+캐치프레이즈를 넣지 않는다. 캐릭터별 Persona 요약과 실제 target ID는 git 밖의 runtime
+character-set 파일이 소유한다.
+
+character-set은 실행 시점의 대상 범위를 완전하게 선언해야 한다. `expectedCharacterCount`와 실제
+배열 길이가 다르거나, `key` 또는 `id`가 중복되거나, 캐릭터가 1명뿐이면 실행 전에 거부된다.
+개발 환경 기준선은 읽기 전용으로 조회한 활성 캐릭터 전체를 한 snapshot에 넣는다.
+
+```json
+{
+  "schemaVersion": 1,
+  "scope": {
+    "label": "example-snapshot",
+    "capturedAt": "2026-09-02T00:00:00.000Z",
+    "expectedCharacterCount": 2
+  },
+  "characters": [
+    {
+      "key": "alpha",
+      "id": "runtime-target-alpha",
+      "name": "Alpha",
+      "personaVersion": "optional-source-version",
+      "personaSummary": "Direct and dry, but considerate.",
+      "canon": []
+    },
+    {
+      "key": "beta",
+      "id": "runtime-target-beta",
+      "name": "Beta",
+      "personaSummary": "Warm and playful without forcing questions.",
+      "canon": []
+    }
+  ]
+}
+```
+
+파일 경로는 `--characters` 또는 `EVAL_CHARACTER_SET_PATH`로 전달한다. 실제 내부 ID, Persona 원문,
+DB 연결 정보가 들어갈 수 있으므로 이 파일은 저장소에 commit하지 않는다. 결과에는 suite와
+character-set의 content hash, snapshot label과 시각, 전체 및 캐릭터별 통계, 누락된
+`character:scenario` 셀, provisional 기준에 미달한 캐릭터 key가 기록된다. 전체 평균이 높더라도
+캐릭터 하나가 최소 pass rate 또는 평균 점수에 미달하면 `qualityPassed`는 `false`다.
+
+현재 in-process target은 synthetic 기본 Persona 하나만 소유한다. 운영 character-set을 proxy
+응답으로 잘못 평가하지 않도록 diagnostic run에는 `EVAL_TARGET_URL`이 필수다. character-set의
+`personaSummary`와 `canon`에는 judge가 필요한 검수된 공개 요약만 넣고 full prompt나 민감한 원문을
+복사하지 않는다. `personaVersion`은 source DB가 안정적인 version 또는 snapshot 식별자를 제공할 때만
+넣는 선택 필드다. 제공되지 않아도 실제 served prompt SHA-256이 비교 기준을 맡는다.
+
+Naturalness suite의 `mode`는 `diagnostic`이다. 점수와 provisional quality 판정은 제공하지만
+`certificationEligible`과 H30 `passed`는 항상 `false`다. 품질 점수가 낮다는 이유만으로 실행
+프로세스를 실패시키지는 않지만, runtime/judge 실패, 캐릭터×시나리오 누락 또는 재현 manifest의
+필수 관측값 누락은 nonzero exit로 처리한다. H30 suite는 character-set override를 허용하지 않아 기존
+인증 의미를 보존한다.
+
+Diagnostic judge에는 H30 공통 기준에 `local_relevance`, `natural_korean`,
+`persona_without_motif`를 추가한다. `dm_style`은 이 모드에서 길이·Markdown·서술 같은 표면 형식만
+판정한다. 한국어가 유창해 보여도 직전 문맥을 벗어나거나 사용자가 어색한 전제를 대신 이어 줘야
+하면 자연스러운 대화로 보지 않는다. Persona·관계 단계에 맞는 반말·존댓말 혼용은 그 자체로
+감점하지 않고, 게시물·프로필·직업·취미 소재를 대화보다 앞세우거나 반복 재연하면 감점한다.
+
+Diagnostic simulator는 후보의 어색한 답을 열성적으로 받아 주거나 자연스럽게 고쳐 이어 가지
+않는다. 이미 밝힌 사용자 이유를 반복하지 않고, 이후 scripted beat는 실제 문구가 아니라 목적만
+보고 생성한다. 이 규칙은 후보 답변의 결함을 simulator가 가리는 것을 줄이기 위한 평가 입력 계약이며
+production chat 동작에는 적용되지 않는다.
+
+## 사람 평가와 보정 데이터
+
+사람 평가 절차는
+[`docs/evals/naturalness-human-review-guide.md`](../docs/evals/naturalness-human-review-guide.md)에
+있다. 저장 계약은
+[`evals/calibration/naturalness-gold.schema.json`](calibration/naturalness-gold.schema.json), 현재
+초기 자료는
+[`evals/calibration/naturalness-human-seed-2026-09-02.json`](calibration/naturalness-human-seed-2026-09-02.json)이다.
+
+현재 seed는 자동 결과를 본 reviewer 한 명의 사후 검수다. 8개 trajectory의 자동 판정과 22개 사람
+주석을 보존하지만 `status: seed`, `reviewerCount: 1`, `blind: false`, `method: posthoc`이므로 gold,
+calibrated judge 또는 release 근거가 아니다. `adjudicated`는 최소 2명의 독립 blind reviewer가
+필요하며 loader가 이 조건을 강제한다. Production transcript는 별도 데이터 정책 승인 전에는 보정
+자료에 포함하지 않는다. 이 추가 진단과 seed는 기존 H30 rubric, 점수식, threshold,
+certification 조건을 변경하지 않는다.
+
+### Blind review 패킷
+
+기존 diagnostic `suite-report.json`에서 reviewer 2명용 패킷을 만든다. 명령은 모델이나 DB를 호출하지
+않으며, 출력 디렉터리가 이미 있으면 reviewer 작성물을 덮어쓰지 않고 실패한다.
+
+```bash
+npm run eval:review:prepare -- \
+  --source /absolute/path/to/suite-report.json \
+  --output /absolute/path/to/new-review-directory \
+  --seed 20260902
+```
+
+출력에는 reviewer별 `.packet.md`, `.packet.json`, `.submission.json`과 운영자 전용
+`_PRIVATE-review-key.json`이 생긴다. 각 reviewer에게 자신의 packet과 submission만 전달한다. 다른
+reviewer 파일, private key, 기존 사람 주석 보고서, 자동 점수는 보여주지 않는다. Packet은 이름·ID,
+run ID, 모델, 자동 점수·판정, scripted/simulated 표식을 제외하고 익명 Persona brief와 대화만
+포함한다. 동일 trajectory의 표시 순서와 pair 좌우는 A/B에서 반대로 배치된다.
+
+두 사람이 독립적으로 작성한 뒤 각 submission을 `status: complete`로 바꾸고 `completedAt`을 넣는다.
+`reviewerAlias`도 두 사람이 서로 다른 비식별 가명으로 교체한다.
+`fail`에는 tag, 최소 evidence turn, 이유가 모두 필요하다. 집계는 draft, 항목 누락, 잘못된 turn,
+동일 reviewer alias를 거부한다.
+
+```bash
+npm run eval:review:aggregate -- \
+  --key /absolute/path/to/_PRIVATE-review-key.json \
+  --submissions /absolute/path/to/reviewer-a.submission.json,/absolute/path/to/reviewer-b.submission.json \
+  --output /absolute/path/to/new-agreement-directory
+```
+
+결과는 reviewer 간 trajectory·pairwise 일치율, 자동 judge 대비 각 reviewer의 일치율,
+false-pass·false-fail, adjudication 대상을 기록한다. 집계기는 결과가 모두 일치해도 gold artifact를
+자동 생성하거나 `adjudicated`로 승격하지 않는다. Reviewer가 기존 원문이나 22개 예시를 이미 본
+경우 blind reviewer로 세지 않는다. 생성 패킷과 private key, 제출물, agreement 결과는
+`evals/results/` 아래 ignored artifact로 유지하고 commit하지 않는다.
 
 기본 target은 production Hono app을 in-process로 실행하고 Memory Consolidation이 끝날 때까지 매 turn
 기다린다. 배포 환경을 평가하려면 다음처럼 지정한다.
@@ -57,11 +229,21 @@ npm run eval:long -- --skip-judge --output /tmp/opod-eval-diagnostics
 
 ```text
 suite-report.json                 # suite aggregate + 모든 trajectory 결과
+baseline-manifest.json            # 원문 없는 실행 재현·비교 가능성 metadata
 harbor-reward.json                # 숫자 값만 갖는 Harbor reward payload
 trajectory.json                   # 최저 점수 run의 ATIF v1.7 (RewardKit용)
 trajectories/<run-id>/result.json
 trajectories/<run-id>/trajectory.atif.json
 ```
+
+`suite-report.json.baseline`과 `baseline-manifest.json`은 같은 객체다. 모델과 generation 설정,
+observed response model, suite/character-set SHA-256, Git HEAD·dirty path SHA-256, 캐릭터별 stable
+prompt SHA-256과 block/canon 수, retrieval/consolidation 설정을 기록한다. `comparison.ready`가
+`false`면 `reasons`에 누락·불일치 원인이 들어가며 그 실행끼리 품질 차이를 주장하면 안 된다.
+
+실제 served prompt fingerprint는 non-streaming 요청의 `x-opod-debug` opt-in 응답에서 얻는다.
+metadata에는 hash/count/context section 이름만 있고 Persona, canon, Memory, 사용자 발화 원문은 없다.
+header가 없는 일반 응답에는 `opod_debug`가 추가되지 않는다.
 
 `suite-report.json`은 scenario별 run 수, mean/median, min/max/range, sample SD, pass rate와 mixed-pass를
 `scenarioStats`에 기록한다. confidence run에서는 scenario별 pass rate가 전체 기준(현재 0.80)보다 낮거나
@@ -90,6 +272,6 @@ orchestration을 담당하고, OPOD 고유 대화 semantics와 rollout 생성은
 `/logs/verifier/opod-eval/`에, 다차원 reward는 `/logs/verifier/reward.json`에 남아 Harbor의 verifier
 logs로 수집된다.
 
-PR workflow는 fixture, 27개 harness 회귀 테스트, pinned Harbor task 계약만 검증한다. 실제 모델을
+PR workflow는 fixture, harness 회귀 테스트, pinned Harbor task 계약만 검증한다. 실제 모델을
 호출하는 workflow_dispatch의 기본 profile은 scenario당 3회인 `confidence`다. 현재 threshold는 human
 gold transcript calibration 전의 `H30-provisional` 기준이다.

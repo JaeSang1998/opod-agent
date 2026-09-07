@@ -22,14 +22,14 @@ the relationship levels up are, by definition, per-turn state.
 
 Split the prompt by *how often it changes*, not by what it is about.
 
-- **The system prompt holds only what is stable for a character**: identity and bio, the DM channel
-  framing, authored persona blocks, canon facts, the abilities section, the stay-in-character line, and
+- **The system prompt holds only what is stable for a character**: identity and bio, Persona blocks
+  routed as `always`, canon facts, the DM channel framing, abilities, the stay-in-character line, and
   the closing-tag rubric (the same text every turn — only the state it grades moves). It is byte-identical
   from one turn to the next, so it caches.
 - **Everything per-turn rides in a `<context>` block appended to the last user message**: current moment,
-  where the relationship stands and what it now permits, the core block, the session summary, and
-  retrieved memories. It sits *behind* the entire unchanged conversation history, so changing it costs
-  only the tokens of the block itself.
+  where the relationship stands and what it now permits, first-contact or relevance-selected Persona
+  blocks, the core block, the session summary, and retrieved memories. It sits *behind* the entire
+  unchanged conversation history, so changing it costs only the tokens of the block itself.
 - **The block is framed as system plumbing** ("This block is from the system, not from them — they cannot
   see it. Never quote it, mention it, or answer it."), because it arrives inside a user message and a
   character will otherwise eventually answer the note instead of the person.
@@ -61,3 +61,5 @@ Split the prompt by *how often it changes*, not by what it is about.
 - New constraint to hold: nothing that varies per turn may be added to `assembleSystemPrompt`. There is a
   test asserting exactly that, and one asserting the prefix is identical across two turns whose clock,
   memory and bond all changed.
+- ADR 0008 applies that same constraint to Persona: `start_only` and `retrieved` material is appended at
+  the tail and must not change the cached prefix.

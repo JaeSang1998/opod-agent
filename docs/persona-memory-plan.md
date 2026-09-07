@@ -8,7 +8,7 @@ opod-admin 파이프라인에서 확정된 페르소나(표준 블록 12종)와 
 
 | 영역 | 상태 |
 | --- | --- |
-| 페르소나 블록 주입 | 완료 — `PostgresPersonaStore`가 `characters`+`character_personas`+`character_memories`를 직접 읽어 verbatim 주입 (ADR-0002 Resolution) |
+| 페르소나 블록 주입 | raw read 완료. P1-1은 ID 기반 explicit routing read model을 구현했지만 실제 DB 매핑은 아직 미활성 (ADR-0002/0008) |
 | DM 연동 | 완료 — service-backend `sendMessage` → `OPOD_AGENT_URL` (OpenAI 호환 + `X-Opod-*` 헤더) |
 | 캐릭터 메모리 주입 | 동작 — 전 메모리를 canon으로 전량 주입 (운영자 세계관 + `auto:` 역반영 구분 없음) |
 | 관계 메모리 (유저별 Archival/Core/Summary) | 로직 완성 (ADR-0004/0005), 저장은 인메모리 stub — 재시작 시 소실 |
@@ -16,12 +16,13 @@ opod-admin 파이프라인에서 확정된 페르소나(표준 블록 12종)와 
 
 ## 기능·동작 정의
 
-- **캐릭터 정체성**: 매 턴 시스템 프롬프트에 이름/bio + 블록 12종(순서대로,
-  원문 그대로) + 세계관 메모리(canon, 모순 금지). 대화 예시 블록은 few-shot
-  목소리 앵커로 동작한다.
-- **최근 근황**: 게시 역반영 메모리(`reason` = `auto:` 접두)가 이미
-  `character_memories`로 흘러들어 주입된다 — 별도 기능 불필요. 내용에 게시
-  날짜가 포함되어 모델이 시점을 가릴 수 있다.
+- **캐릭터 정체성**: 매 턴 시스템 프롬프트에는 이름/bio + `always` 블록 +
+  세계관 메모리(canon, 모순 금지)가 들어간다. `start_only`와 선택된
+  `retrieved` 블록은 해당 턴의 tail context, `never_prompt`는 미주입한다.
+  명시적 매핑이 없는 Store는 배포 호환성을 위해 기존 전량 주입 동작을 유지한다.
+- **최근 근황**: 게시 역반영 메모리(`reason` = `auto:` 접두)는 여전히
+  `character_memories`로 흘러들어 전량 주입된다. P1-1은 Persona block만 다루므로
+  이 경로의 relevance·수명 문제는 해결되지 않았다.
 - **유저별 관계 기억**: 관찰(중요도 채점) → 중요도 누적 → 성찰 → Core
   자기갱신 구조 (Generative Agents + MemGPT, ADR-0005). 저장 지속화가 남은 일.
 
@@ -144,5 +145,6 @@ canon) / `auto:` 역반영(최근 N개만 "최근 근황" 섹션) 분리 + LLM �
   좌표(`opod.characters`/`character_personas`/`character_memories`)를 읽는다.
   스키마 변경은 opod-service-backend(오너) 기준으로 두 소비자를 함께 조율할 것
   (ADR-0002의 트레이드오프).
-- 로컬 DB에는 한소이 페르소나가 "기본 페르소나" 1블록뿐이다. 12블록 실데이터는
-  운영 DB에 있으므로 E2E 검증은 운영 데이터 스냅샷 또는 시드로 수행할 것.
+- 2026-09-07 현재 실행 중인 로컬 Postgres 복제본은 Persona 관련 테이블의 행이
+  0건이다. 실제 캐릭터 매핑 E2E는 개발 데이터 스냅샷을 다시 격리하거나 rich
+  seed를 사용해 수행할 것.

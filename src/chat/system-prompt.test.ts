@@ -38,6 +38,26 @@ describe("assembleSystemPrompt", () => {
     );
   });
 
+  it("applies the shared natural-reply policy after persona and canon context", () => {
+    const out = assembleSystemPrompt({ persona });
+
+    expect(out).toContain("# How to keep each reply natural");
+    expect(out).toContain("Respond to what they actually wrote first");
+    expect(out).toContain("not a checklist or a source of topics");
+    expect(out).toContain("Do not keep returning to the same signature topic");
+    expect(out).toContain("do not invent a specific activity");
+    expect(out).toContain("Do not default to interviewing or counseling them");
+    expect(out).toContain("ordinary Korean chat phrasing");
+    expect(out).toContain("Mixing speech levels is not automatically a mistake");
+    expect(out).not.toContain("You are somewhere in the middle of your own day");
+
+    // Shared reply policy must have the final say over authored motifs and
+    // established facts without replacing either source of character identity.
+    expect(out.indexOf("# How to keep each reply natural")).toBeGreaterThan(
+      out.indexOf("# Established facts of your life"),
+    );
+  });
+
   it("closes by asking for a single chat message", () => {
     const out = assembleSystemPrompt({ persona });
     expect(out.trimEnd().endsWith("natural and concise.")).toBe(true);
@@ -75,6 +95,24 @@ describe("assembleSystemPrompt", () => {
     const out = assembleSystemPrompt({ persona: bare });
     expect(out).not.toContain("# Personality");
     expect(out).not.toContain("# Established facts of your life");
+  });
+
+  it("renders routed blocks without reclassifying them by title", () => {
+    const withGreeting: Persona = {
+      ...persona,
+      blocks: [
+        ...persona.blocks,
+        { title: "greeting", content: "먼저 다가가 반갑게 인사한다." },
+      ],
+    };
+
+    expect(withGreeting.blocks).toContainEqual({
+      title: "greeting",
+      content: "먼저 다가가 반갑게 인사한다.",
+    });
+    expect(assembleSystemPrompt({ persona: withGreeting })).toContain(
+      "먼저 다가가 반갑게 인사한다.",
+    );
   });
 
   it("carries the closing-grade rubric only when a bond is tracked", () => {

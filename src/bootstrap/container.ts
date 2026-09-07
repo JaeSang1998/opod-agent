@@ -24,6 +24,7 @@ import { ConsolidationWorker } from "../memory/consolidation-worker.js";
 import { Reflector } from "../memory/reflection.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";
 import { type AgentTool, buildDefaultTools } from "../tools/index.js";
+import type { PersonaBlockSelector } from "../persona/persona-router.js";
 
 export interface Container {
   env: Env;
@@ -50,6 +51,8 @@ export interface ContainerOverrides {
   queue?: JobQueue;
   tools?: AgentTool[];
   log?: Logger;
+  /** Optional P1 routing relevance owner; absent keeps retrievable lore closed. */
+  personaBlockSelector?: PersonaBlockSelector;
 }
 
 /**
@@ -156,6 +159,8 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     },
     log,
     tools,
+    undefined,
+    overrides.personaBlockSelector,
   );
 
   const reflector = new Reflector(provider, memory, {

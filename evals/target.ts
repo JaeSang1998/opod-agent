@@ -4,9 +4,23 @@ import { buildContainer, type Container } from "../src/bootstrap/container.js";
 import { loadEnv } from "../src/bootstrap/env.js";
 import { OpenAICompatProvider } from "../src/provider/openai-compat-provider.js";
 import { StubJobQueue } from "../src/memory/stub-job-queue.js";
+import { StubMemoryStore } from "../src/memory/stub-memory-store.js";
+import { FakeProvider } from "../src/testing/fake-provider.js";
 import type { ToolLoopEvent } from "../src/chat/tool-loop.js";
+import type {
+  PromptContextSectionName,
+  PromptDebugMetadata,
+  PromptMemoryProvenance,
+  PromptMemorySourceProvenance,
+} from "../src/chat/chat-service.js";
 import type { TokenUsage } from "./llm.js";
+import type { MemoryFixture } from "./schema.js";
+import type {
+  PromptPersonaProvenance,
+  PromptPersonaSourceProvenance,
+} from "../src/persona/persona-router.js";
 
+export type { PromptDebugMetadata, PromptMemoryProvenance };
 export interface ConversationIdentity {
   characterId: string;
   userId: string;
@@ -28,6 +42,26 @@ export interface TargetTurnOutput {
   usage: TokenUsage;
   toolEvents: ToolLoopEvent[];
   responseId?: string;
+  responseModel?: string;
+  promptDebug?: PromptDebugMetadata;
+}
+
+export interface TargetMemoryFixtureSetup {
+  schemaVersion: 1;
+  seedPolicy: MemoryFixture["seedPolicy"];
+  seededRecordCount: number;
+  declaredCurrentStateCount: number;
+  bindings: Array<{
+    fixtureId: string;
+    runtimeMemoryId: string;
+    lifecycle: MemoryFixture["records"][number]["lifecycle"];
+  }>;
+}
+
+export interface TargetSetupInput {
+  runId: string;
+  identity: ConversationIdentity;
+  memoryFixture: MemoryFixture;
 }
 
 export interface ConversationTarget {
@@ -35,6 +69,7 @@ export interface ConversationTarget {
   readonly model: string;
   readonly requestConfig: Record<string, unknown>;
   readonly runtimeConfig: Record<string, unknown>;
+  setupMemoryFixture?(input: TargetSetupInput): Promise<TargetMemoryFixtureSetup>;
   reply(input: TargetTurnInput): Promise<TargetTurnOutput>;
   close(): Promise<void>;
 }
@@ -63,14 +98,17 @@ class InProcessTarget implements ConversationTarget {
       TOOLS_ENABLED: env.EVAL_TARGET_TOOLS === "true" ? "true" : "false",
       LOG_LEVEL: env.EVAL_LOG_LEVEL ?? "warn",
     });
-    const provider = new OpenAICompatProvider({
-      baseUrl: loaded.LLM_BASE_URL,
-      apiKey: loaded.LLM_API_KEY,
-      model: loaded.LLM_MODEL,
-      embeddingModel: loaded.EMBEDDING_MODEL,
-      embeddingBaseUrl: loaded.EMBEDDING_BASE_URL,
-      embeddingApiKey: loaded.EMBEDDING_API_KEY,
-    });
+    const providerMode = evalTargetProviderMode(env.EVAL_TARGET_PROVIDER);
+    const provider = providerMode === "deterministic"
+      ? new FakeProvider("구조 검증용 합성 응답입니다.")
+      : new OpenAICompatProvider({
+          baseUrl: loaded.LLM_BASE_URL,
+          apiKey: loaded.LLM_API_KEY,
+          model: loaded.LLM_MODEL,
+          embeddingModel: loaded.EMBEDDING_MODEL,
+          embeddingBaseUrl: loaded.EMBEDDING_BASE_URL,
+          embeddingApiKey: loaded.EMBEDDING_API_KEY,
+        });
     // Supplying the raw provider deliberately bypasses the deployment LLM-log
     // decorator: a self-contained eval must work without DATABASE_URL.
     this.container = buildContainer(loaded, { provider });
@@ -79,7 +117,7 @@ class InProcessTarget implements ConversationTarget {
     }
     this.queue = this.container.queue;
     this.app = createApp(this.container);
-    this.model = env.EVAL_TARGET_MODEL ?? loaded.LLM_MODEL;
+    this.model = env.EVAL_TARGET_MODEL ?? provider.defaultModel;
     this.requestConfig = targetRequestConfig(env);
     this.consolidationMode = consolidationMode(env.EVAL_CONSOLIDATION_MODE);
     this.batchTurns = positiveInteger(env.EVAL_CONSOLIDATION_BATCH_TURNS, 4);
@@ -87,6 +125,53 @@ class InProcessTarget implements ConversationTarget {
       consolidationMode: this.consolidationMode,
       consolidationBatchTurns: this.batchTurns,
       toolsEnabled: loaded.TOOLS_ENABLED,
+      providerMode,
+    };
+  }
+
+  async setupMemoryFixture(input: TargetSetupInput): Promise<TargetMemoryFixtureSetup> {
+    if (!(this.container.memory instanceof StubMemoryStore)) {
+      throw new Error("in-process memory fixtures require StubMemoryStore");
+    }
+    const embeddings = await this.container.provider.embed(
+      input.memoryFixture.records.map((record) => record.content),
+    );
+    if (embeddings.length !== input.memoryFixture.records.length) {
+      throw new Error(
+        `memory fixture embedding count ${embeddings.length} does not match ` +
+          `record count ${input.memoryFixture.records.length}`,
+      );
+    }
+    const stored = await this.container.memory.upsertMany(
+      { userId: input.identity.userId, characterId: input.identity.characterId },
+      input.memoryFixture.records.map((record, index) => ({
+        content: record.content,
+        kind: record.kind,
+        importance: record.importance,
+        embedding: embeddings[index] ?? [],
+      })),
+      `eval-memory-fixture:${input.runId}`,
+    );
+    if (stored.length !== input.memoryFixture.records.length) {
+      throw new Error(
+        `memory fixture seeded ${stored.length}/${input.memoryFixture.records.length} records; ` +
+          "deduplication or a write failure made the fixture incomplete",
+      );
+    }
+    return {
+      schemaVersion: 1,
+      seedPolicy: input.memoryFixture.seedPolicy,
+      seededRecordCount: stored.length,
+      declaredCurrentStateCount: input.memoryFixture.currentStateRecords.length,
+      bindings: input.memoryFixture.records.map((record, index) => {
+        const storedRecord = stored[index];
+        if (!storedRecord) throw new Error(`memory fixture binding ${record.id} is missing`);
+        return {
+          fixtureId: record.id,
+          runtimeMemoryId: storedRecord.id,
+          lifecycle: record.lifecycle,
+        };
+      }),
     };
   }
 
@@ -165,7 +250,14 @@ class HttpTarget implements ConversationTarget {
       endpoint: this.endpoint.origin,
       responseTimeoutMs: this.timeoutMs,
       remoteSettleMs: this.settleMs,
+      consolidationMode: "remote",
     };
+  }
+
+  async setupMemoryFixture(): Promise<TargetMemoryFixtureSetup> {
+    throw new Error(
+      "HTTP targets do not accept memory fixtures; use the isolated in-process target",
+    );
   }
 
   async reply(input: TargetTurnInput): Promise<TargetTurnOutput> {
@@ -248,7 +340,7 @@ function targetRequestConfig(env: NodeJS.ProcessEnv): Record<string, unknown> {
   return config;
 }
 
-function parseChatResponse(payload: unknown): Omit<TargetTurnOutput, "latencyMs"> {
+export function parseChatResponse(payload: unknown): Omit<TargetTurnOutput, "latencyMs"> {
   if (!isRecord(payload)) throw new Error("target returned a non-object response");
   const choices = Array.isArray(payload.choices) ? payload.choices : [];
   const first = isRecord(choices[0]) ? choices[0] : undefined;
@@ -261,13 +353,277 @@ function parseChatResponse(payload: unknown): Omit<TargetTurnOutput, "latencyMs"
   return {
     text,
     responseId: typeof payload.id === "string" ? payload.id : undefined,
+    responseModel: typeof payload.model === "string" ? payload.model : undefined,
     usage: {
       promptTokens: numeric(usage.prompt_tokens),
       completionTokens: numeric(usage.completion_tokens),
       totalTokens: numeric(usage.total_tokens),
     },
     toolEvents: events.filter(isToolLoopEvent),
+    promptDebug: parsePromptDebug(debug.prompt),
   };
+}
+
+const PROMPT_CONTEXT_SECTION_NAMES = new Set<PromptContextSectionName>([
+  "current_moment",
+  "bond",
+  "persona_start",
+  "persona_retrieved",
+  "core_memory",
+  "conversation_summary",
+  "retrieved_memories",
+]);
+
+function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error("target returned invalid prompt debug metadata");
+  const retrieval = isRecord(value.retrievalConfig) ? value.retrievalConfig : undefined;
+  const weights = retrieval && isRecord(retrieval.weights) ? retrieval.weights : undefined;
+  const sections = Array.isArray(value.contextSectionNames)
+    ? value.contextSectionNames
+    : undefined;
+  const memoryProvenance = parseMemoryProvenance(value.memoryProvenance);
+  const personaProvenance = parsePersonaProvenance(value.personaProvenance);
+  const valid =
+    value.schemaVersion === 1 &&
+    typeof value.stablePromptSha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(value.stablePromptSha256) &&
+    isNonNegativeInteger(value.personaBlockCount) &&
+    isNonNegativeInteger(value.canonCount) &&
+    sections?.every(
+      (section): section is PromptContextSectionName =>
+        typeof section === "string" &&
+        PROMPT_CONTEXT_SECTION_NAMES.has(section as PromptContextSectionName),
+    ) === true &&
+    isNonNegativeInteger(value.retrievedMemoryCount) &&
+    value.memoryPolicyVersion === 1 &&
+    retrieval !== undefined &&
+    isPositiveInteger(retrieval.topK) &&
+    weights !== undefined &&
+    isNonNegativeNumber(weights.recency) &&
+    isNonNegativeNumber(weights.importance) &&
+    isNonNegativeNumber(weights.relevance) &&
+    isPositiveNumber(retrieval.recencyDecay) &&
+    retrieval.recencyDecay <= 1 &&
+    isPositiveInteger(retrieval.summaryTurnThreshold);
+  if (!valid || !retrieval || !weights || !sections) {
+    throw new Error("target returned invalid prompt debug metadata");
+  }
+  return {
+    schemaVersion: 1,
+    stablePromptSha256: value.stablePromptSha256 as string,
+    personaBlockCount: value.personaBlockCount as number,
+    canonCount: value.canonCount as number,
+    contextSectionNames: sections as PromptContextSectionName[],
+    retrievedMemoryCount: value.retrievedMemoryCount as number,
+    memoryProvenance,
+    personaProvenance,
+    memoryPolicyVersion: 1,
+    retrievalConfig: {
+      topK: retrieval.topK as number,
+      weights: {
+        recency: weights.recency as number,
+        importance: weights.importance as number,
+        relevance: weights.relevance as number,
+      },
+      recencyDecay: retrieval.recencyDecay as number,
+      summaryTurnThreshold: retrieval.summaryTurnThreshold as number,
+    },
+  };
+}
+
+const PERSONA_KINDS = new Set([
+  "identity",
+  "behavior",
+  "voice",
+  "example",
+  "greeting",
+  "lore",
+  "creator_note",
+]);
+const PERSONA_INJECTIONS = new Set([
+  "always",
+  "start_only",
+  "retrieved",
+  "never_prompt",
+]);
+const PERSONA_DESTINATIONS = new Set(["system_prompt", "turn_context", "excluded"]);
+const PERSONA_REASONS = new Set([
+  "always_in_system_prompt",
+  "start_only_first_turn",
+  "start_only_after_first_turn",
+  "retrieved_for_turn",
+  "not_retrieved",
+  "never_prompt",
+  "legacy_default_always",
+  "legacy_reactive_greeting_excluded",
+]);
+
+function parsePersonaProvenance(value: unknown): PromptPersonaProvenance | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    value.policyVersion !== 1 ||
+    !Array.isArray(value.sources)
+  ) {
+    throw new Error("target returned invalid persona provenance metadata");
+  }
+  return {
+    schemaVersion: 1,
+    policyVersion: 1,
+    sources: value.sources.map(parsePersonaSourceProvenance),
+  };
+}
+
+function parsePersonaSourceProvenance(value: unknown): PromptPersonaSourceProvenance {
+  if (!isRecord(value)) throw new Error("target returned invalid persona provenance metadata");
+  const validShape =
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    (value.kind === null || (typeof value.kind === "string" && PERSONA_KINDS.has(value.kind))) &&
+    typeof value.injection === "string" &&
+    PERSONA_INJECTIONS.has(value.injection) &&
+    (value.mapping === "explicit" || value.mapping === "legacy") &&
+    typeof value.destination === "string" &&
+    PERSONA_DESTINATIONS.has(value.destination) &&
+    typeof value.reason === "string" &&
+    PERSONA_REASONS.has(value.reason) &&
+    personaRouteFieldsAgree(value);
+  if (!validShape) throw new Error("target returned invalid persona provenance metadata");
+  return {
+    id: value.id as string,
+    kind: value.kind as PromptPersonaSourceProvenance["kind"],
+    injection: value.injection as PromptPersonaSourceProvenance["injection"],
+    mapping: value.mapping as PromptPersonaSourceProvenance["mapping"],
+    destination: value.destination as PromptPersonaSourceProvenance["destination"],
+    reason: value.reason as PromptPersonaSourceProvenance["reason"],
+  };
+}
+
+function personaRouteFieldsAgree(value: Record<string, unknown>): boolean {
+  switch (value.reason) {
+    case "always_in_system_prompt":
+      return value.mapping === "explicit" && value.injection === "always" && value.destination === "system_prompt";
+    case "start_only_first_turn":
+      return value.mapping === "explicit" && value.injection === "start_only" && value.destination === "turn_context";
+    case "start_only_after_first_turn":
+      return value.mapping === "explicit" && value.injection === "start_only" && value.destination === "excluded";
+    case "retrieved_for_turn":
+      return value.mapping === "explicit" && value.injection === "retrieved" && value.destination === "turn_context";
+    case "not_retrieved":
+      return value.mapping === "explicit" && value.injection === "retrieved" && value.destination === "excluded";
+    case "never_prompt":
+      return value.mapping === "explicit" && value.injection === "never_prompt" && value.destination === "excluded";
+    case "legacy_default_always":
+      return value.mapping === "legacy" && value.injection === "always" && value.destination === "system_prompt";
+    case "legacy_reactive_greeting_excluded":
+      return value.mapping === "legacy" && value.injection === "never_prompt" && value.destination === "excluded";
+    default:
+      return false;
+  }
+}
+
+const MEMORY_PROVENANCE_STATUSES = new Set(["completed", "skipped", "failed"]);
+const MEMORY_PROVENANCE_REASONS = new Set([
+  "retrieval_completed",
+  "missing_identity",
+  "empty_query",
+  "embedding_unavailable",
+  "retrieval_failed",
+]);
+const MEMORY_RETRIEVAL_REASONS = new Set([
+  "selected_top_k",
+  "outside_top_k",
+  "legacy_store_selected",
+]);
+
+function parseMemoryProvenance(value: unknown): PromptMemoryProvenance | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value) ||
+    typeof value.status !== "string" ||
+    !MEMORY_PROVENANCE_STATUSES.has(value.status) ||
+    typeof value.reason !== "string" ||
+    !MEMORY_PROVENANCE_REASONS.has(value.reason) ||
+    !Array.isArray(value.sources)
+  ) {
+    throw new Error("target returned invalid memory provenance metadata");
+  }
+  const sources = value.sources.map(parseMemorySourceProvenance);
+  const statusMatchesReason =
+    (value.status === "completed" && value.reason === "retrieval_completed") ||
+    (value.status === "failed" && value.reason === "retrieval_failed") ||
+    (value.status === "skipped" &&
+      (value.reason === "missing_identity" ||
+        value.reason === "empty_query" ||
+        value.reason === "embedding_unavailable"));
+  if (!statusMatchesReason || (value.status !== "completed" && sources.length > 0)) {
+    throw new Error("target returned invalid memory provenance metadata");
+  }
+  return {
+    status: value.status as PromptMemoryProvenance["status"],
+    reason: value.reason as PromptMemoryProvenance["reason"],
+    sources,
+  };
+}
+
+function parseMemorySourceProvenance(value: unknown): PromptMemorySourceProvenance {
+  if (!isRecord(value)) throw new Error("target returned invalid memory provenance metadata");
+  const rank = value.rank === null ? null : value.rank;
+  const score = value.score === null ? null : value.score;
+  const rawRelevance = value.rawRelevance === null ? null : value.rawRelevance;
+  const valid =
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    (value.kind === "observation" || value.kind === "reflection") &&
+    (rank === null || isPositiveInteger(rank)) &&
+    (score === null || isNonNegativeNumber(score)) &&
+    (rawRelevance === null ||
+      (typeof rawRelevance === "number" && Number.isFinite(rawRelevance))) &&
+    (value.retrieval === "selected" || value.retrieval === "excluded") &&
+    typeof value.retrievalReason === "string" &&
+    MEMORY_RETRIEVAL_REASONS.has(value.retrievalReason) &&
+    (value.retrievalReason === "outside_top_k"
+      ? value.retrieval === "excluded"
+      : value.retrieval === "selected") &&
+    typeof value.injected === "boolean" &&
+    (value.injectionReason === "retrieved_memories_section" ||
+      value.injectionReason === "not_retrieved") &&
+    (!value.injected || value.retrieval === "selected") &&
+    (value.injected
+      ? value.injectionReason === "retrieved_memories_section"
+      : value.injectionReason === "not_retrieved");
+  if (!valid) throw new Error("target returned invalid memory provenance metadata");
+  return {
+    id: value.id as string,
+    kind: value.kind as PromptMemorySourceProvenance["kind"],
+    rank: rank as number | null,
+    score: score as number | null,
+    rawRelevance: rawRelevance as number | null,
+    retrieval: value.retrieval as PromptMemorySourceProvenance["retrieval"],
+    retrievalReason:
+      value.retrievalReason as PromptMemorySourceProvenance["retrievalReason"],
+    injected: value.injected as boolean,
+    injectionReason:
+      value.injectionReason as PromptMemorySourceProvenance["injectionReason"],
+  };
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function isToolLoopEvent(value: unknown): value is ToolLoopEvent {
@@ -295,6 +651,12 @@ function consolidationMode(raw: string | undefined): ConsolidationMode {
   const value = raw ?? "quiescent";
   if (value === "quiescent" || value === "batched" || value === "none") return value;
   throw new Error(`EVAL_CONSOLIDATION_MODE must be quiescent, batched, or none; got ${value}`);
+}
+
+function evalTargetProviderMode(raw: string | undefined): "configured" | "deterministic" {
+  const value = raw ?? "configured";
+  if (value === "configured" || value === "deterministic") return value;
+  throw new Error(`EVAL_TARGET_PROVIDER must be configured or deterministic; got ${value}`);
 }
 
 function positiveInteger(raw: string | undefined, fallback: number): number {

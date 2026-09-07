@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import type {
   GrantBondInput,
   MemoryStore,
+  MemoryRetrievalResult,
   NewMemory,
   RetrieveOptions,
   SummarySaveResult,
@@ -19,7 +20,7 @@ import type {
   Summary,
 } from "./types.js";
 import { cosineSimilarity } from "./vector.js";
-import { rankByRetrievalScore } from "./retrieval.js";
+import { scoreRetrievalCandidates } from "./retrieval.js";
 
 /**
  * How many of a relationship's most-recently-accessed memories are loaded as
@@ -101,18 +102,43 @@ export class PostgresMemoryStore implements MemoryStore {
     topK: number,
     opts: RetrieveOptions,
   ): Promise<ArchivalMemory[]> {
+    return (await this.retrieveWithTrace(key, queryEmbedding, topK, opts)).memories;
+  }
+
+  async retrieveWithTrace(
+    key: RelationshipKey,
+    queryEmbedding: number[],
+    topK: number,
+    opts: RetrieveOptions,
+  ): Promise<MemoryRetrievalResult> {
     const candidates = await this.pool.query<MemoryRow>(
       `SELECT * FROM opod.agent_archival_memories
        WHERE user_id = $1 AND character_id = $2
        ORDER BY last_accessed_at DESC LIMIT $3`,
       [key.userId, key.characterId, CANDIDATE_LIMIT],
     );
-    const ranked = rankByRetrievalScore(candidates.rows.map(rowToMemory), queryEmbedding, {
+    const scored = scoreRetrievalCandidates(candidates.rows.map(rowToMemory), queryEmbedding, {
       weights: opts.weights,
       recencyDecay: opts.recencyDecay,
       topK,
     });
-    if (ranked.length === 0) return [];
+    const ranked = scored
+      .filter((candidate) => candidate.decision === "selected")
+      .map((candidate) => candidate.item);
+    if (ranked.length === 0) {
+      return {
+        memories: [],
+        candidates: scored.map((candidate) => ({
+          id: candidate.item.id,
+          kind: candidate.item.kind,
+          rank: candidate.rank,
+          score: candidate.score,
+          rawRelevance: candidate.rawRelevance,
+          decision: candidate.decision,
+          reason: candidate.reason,
+        })),
+      };
+    }
 
     // Touch recency of retrieved rows (Generative Agents updates last_accessed).
     const touchedAt = this.now();
@@ -120,7 +146,18 @@ export class PostgresMemoryStore implements MemoryStore {
       `UPDATE opod.agent_archival_memories SET last_accessed_at = $1 WHERE id = ANY($2::uuid[])`,
       [touchedAt, ranked.map((m) => m.id)],
     );
-    return ranked.map((m) => ({ ...m, lastAccessedAt: touchedAt.toISOString() }));
+    return {
+      memories: ranked.map((m) => ({ ...m, lastAccessedAt: touchedAt.toISOString() })),
+      candidates: scored.map((candidate) => ({
+        id: candidate.item.id,
+        kind: candidate.item.kind,
+        rank: candidate.rank,
+        score: candidate.score,
+        rawRelevance: candidate.rawRelevance,
+        decision: candidate.decision,
+        reason: candidate.reason,
+      })),
+    };
   }
 
   async recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]> {

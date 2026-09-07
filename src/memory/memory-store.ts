@@ -26,6 +26,21 @@ export interface RetrieveOptions {
   recencyDecay: number;
 }
 
+interface MemoryRetrievalCandidate {
+  id: string;
+  kind: MemoryKind;
+  rank: number;
+  score: number;
+  rawRelevance: number;
+  decision: "selected" | "excluded";
+  reason: "selected_top_k" | "outside_top_k";
+}
+
+export interface MemoryRetrievalResult {
+  memories: ArchivalMemory[];
+  candidates: MemoryRetrievalCandidate[];
+}
+
 export interface SummaryWriteGuard {
   /** Stable worker job id; applying the same job twice must be a no-op. */
   idempotencyKey: string;
@@ -57,6 +72,17 @@ export interface MemoryStore {
     topK: number,
     opts: RetrieveOptions,
   ): Promise<ArchivalMemory[]>;
+
+  /**
+   * Optional observability form of `retrieve`. Built-in stores implement it;
+   * custom adapters may keep the legacy method and omit excluded candidates.
+   */
+  retrieveWithTrace?(
+    key: RelationshipKey,
+    queryEmbedding: number[],
+    topK: number,
+    opts: RetrieveOptions,
+  ): Promise<MemoryRetrievalResult>;
 
   /** The most recently created observations (used to seed a reflection pass). */
   recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]>;

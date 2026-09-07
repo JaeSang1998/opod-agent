@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { StructuredLlm, TokenUsage } from "./llm.js";
-import type { JudgeCriterion, Scenario, ScenarioSuite } from "./schema.js";
+import type {
+  EvaluationMode,
+  JudgeCriterion,
+  Scenario,
+  ScenarioSuite,
+} from "./schema.js";
 import type {
   ConversationIdentity,
   ConversationTarget,
+  PromptDebugMetadata,
+  PromptMemoryProvenance,
+  TargetMemoryFixtureSetup,
   TargetTurnOutput,
 } from "./target.js";
 
@@ -68,6 +76,48 @@ export interface TranscriptTurn {
   usage: TokenUsage;
   toolEvents: TargetTurnOutput["toolEvents"];
   responseId?: string;
+  contextObservation?: {
+    sectionNames: PromptDebugMetadata["contextSectionNames"];
+    retrievedMemoryCount: number;
+    memoryProvenance?: PromptMemoryProvenance;
+  };
+}
+
+interface MemoryFixtureProbeObservation {
+  turn: number;
+  description: string;
+  observed: boolean;
+  provenanceStatus?: PromptMemoryProvenance["status"];
+  selectedFixtureIds: string[];
+  injectedFixtureIds: string[];
+  excludedFixtureIds: string[];
+  unmappedSourceCount: number;
+  positiveExpectationPassed: boolean;
+  exclusionExpectationsPassed: boolean;
+}
+
+interface MemoryFixtureObservation {
+  schemaVersion: 1;
+  seedPolicy: "baseline_unfiltered";
+  asOf: string;
+  seededRecordCount: number;
+  declaredCurrentStateCount: number;
+  bindings: TargetMemoryFixtureSetup["bindings"];
+  probes: MemoryFixtureProbeObservation[];
+  preflight: { passed: boolean; reasons: string[] };
+  /** Informational in P1-0: lifecycle filtering is introduced in a later slice. */
+  policyExpectationsPassed: boolean;
+}
+
+interface StablePromptFingerprint {
+  stablePromptSha256: string;
+  personaBlockCount: number;
+  canonCount: number;
+}
+
+interface MemoryPolicyObservation {
+  version: 1;
+  retrievalConfig: PromptDebugMetadata["retrievalConfig"];
 }
 
 interface DeterministicCheck {
@@ -117,6 +167,7 @@ interface JudgeReport {
 
 export interface TrajectoryResult {
   schemaVersion: 1;
+  evaluationMode: EvaluationMode;
   runId: string;
   scenarioId: string;
   scenarioTitle: string;
@@ -131,6 +182,10 @@ export interface TrajectoryResult {
     requestConfig: Record<string, unknown>;
     runtimeConfig: Record<string, unknown>;
   };
+  observedResponseModel?: string;
+  promptFingerprint?: StablePromptFingerprint;
+  memoryPolicy?: MemoryPolicyObservation;
+  memoryFixture?: MemoryFixtureObservation;
   simulator: { model: string; usage: TokenUsage };
   judge: { model: string; replicas: number } | null;
   character: Scenario["character"];
@@ -150,15 +205,26 @@ export interface TrajectoryResult {
 
 export interface SuiteReport {
   schemaVersion: 1;
+  mode: EvaluationMode;
   generatedAt: string;
   profile: string;
   provenance: {
     suitePath?: string;
     suiteSha256?: string;
     gitSha?: string;
+    gitDirty?: boolean;
+    dirtyPathHashes?: Record<string, string>;
+    characterSetPath?: string;
+    characterSetSha256?: string;
+    characterSetLabel?: string;
+    characterSetCapturedAt?: string;
   };
+  baseline?: BaselineManifest;
   thresholds: ScenarioSuite["standard"];
   scenarioStats: Record<string, ScenarioStats>;
+  characterStats: Record<string, ScenarioStats>;
+  failingCharacterKeys: string[];
+  characterCoverage: CharacterCoverage;
   scenarioMedians: Record<string, number>;
   meanScenarioMedian: number;
   p10Score: number;
@@ -167,12 +233,67 @@ export interface SuiteReport {
   stabilityPassed: boolean;
   unstableScenarioIds: string[];
   score: number;
+  qualityPassed: boolean;
   passed: boolean;
   certificationEligible: boolean;
   trajectories: TrajectoryResult[];
 }
 
-export interface ScenarioStats {
+type FingerprintSource = "observed" | "declared" | "unavailable";
+
+interface BaselineCharacterManifest {
+  characterId: string | null;
+  publicKey: string;
+  personaVersion: string | null;
+  stablePromptSha256: string | null;
+  personaBlockCount: number | null;
+  canonCount: number | null;
+  fingerprintSource: FingerprintSource;
+}
+
+export interface BaselineManifest {
+  schemaVersion: 1;
+  runGroupId: string;
+  startedAt: string;
+  targetKind: ConversationTarget["kind"] | "mixed" | null;
+  endpointOrigin: string | null;
+  candidateModel: string | null;
+  simulatorModel: string | null;
+  judgeModel: string | null;
+  judgeReplicas: number | null;
+  requestedGenerationConfig: Record<string, unknown> | null;
+  observedResponseModel: string | null;
+  gitHeadSha: string | null;
+  gitDirty: boolean | null;
+  dirtyPathHashes: Record<string, string>;
+  suitePath: string | null;
+  suiteSha256: string | null;
+  profile: string;
+  baseSeed: number;
+  runCount: number;
+  characterSetPath: string | null;
+  characterSetSha256: string | null;
+  characterSetLabel: string | null;
+  characterSetCapturedAt: string | null;
+  expectedCharacterKeys: string[];
+  completedCharacterKeys: string[];
+  missingCharacterScenarioCells: string[];
+  perCharacter: BaselineCharacterManifest[];
+  memoryPolicyVersion: number | null;
+  retrievalConfig: PromptDebugMetadata["retrievalConfig"] | null;
+  consolidationMode: string | null;
+  fingerprintSource: FingerprintSource;
+  calibrationStatus: "uncalibrated" | "provisional" | "calibrated";
+  comparison: { ready: boolean; reasons: string[] };
+}
+
+export interface BaselineManifestOptions {
+  runGroupId: string;
+  startedAt: string;
+  baseSeed: number;
+}
+
+interface ScenarioStats {
   runs: number;
   meanScore: number;
   medianScore: number;
@@ -182,6 +303,14 @@ export interface ScenarioStats {
   sampleStandardDeviation: number;
   passRate: number;
   mixedPass: boolean;
+}
+
+interface CharacterCoverage {
+  expected: string[];
+  observed: string[];
+  missing: string[];
+  unexpected: string[];
+  passed: boolean;
 }
 
 export interface RunTrajectoryOptions {
@@ -194,6 +323,7 @@ export interface RunTrajectoryOptions {
   seed?: number;
   runIndex?: number;
   runId?: string;
+  evaluationMode?: EvaluationMode;
   identity?: Partial<ConversationIdentity>;
   onTurn?: (turn: TranscriptTurn) => void;
 }
@@ -243,8 +373,49 @@ const COMMON_CRITERIA: JudgeCriterion[] = [
   },
 ];
 
+const DIAGNOSTIC_NATURALNESS_CRITERIA: JudgeCriterion[] = [
+  {
+    id: "local_relevance",
+    description:
+      "Local relevance and adjacency. 5: each reply follows directly from the user's latest message, uses no unsupported premise, and bridges any topic change. 3: one mild tangent still has a clear conversational bridge. 1: replies assume an unstated situation or jump to an unrelated topic or current activity.",
+    weight: 2,
+    minimum: 3,
+  },
+  {
+    id: "natural_korean",
+    description:
+      "Natural Korean phrasing. 5: idiomatic word choice, word order, referents, and connective phrasing sound like a real Korean chat for this Persona and relationship. Mixed honorific and casual speech may be natural when the Persona and relationship support it. 3: one mildly awkward collocation. 1: translation-like wording, broken referents, unnatural jargon, or sentences a Korean speaker would be unlikely to send.",
+    weight: 2,
+    minimum: 3,
+  },
+  {
+    id: "persona_without_motif",
+    description:
+      "Lived-in Persona without motif or source replay. 5: the character reacts to the user first and lets profile, post, product, job, or hobby facts remain background. 3: one slightly forced signature detail. 1: catalog-like specifics, career lore, or one signature topic repeatedly dominates as if reciting source material.",
+    weight: 1.5,
+    minimum: 3,
+  },
+];
+
+function commonCriteria(evaluationMode: EvaluationMode): JudgeCriterion[] {
+  if (evaluationMode !== "diagnostic") return COMMON_CRITERIA;
+  return [
+    ...COMMON_CRITERIA.map((criterion) =>
+      criterion.id === "dm_style"
+        ? {
+            ...criterion,
+            description:
+              "OPOD DM surface style. Surface formatting only; this dimension does not score Korean fluency or contextual naturalness. 5: concise plain-text bubbles with no narration/Markdown. 3: occasional overlong turn. 1: essays, headings, bullets, or stage directions recur.",
+          }
+        : criterion,
+    ),
+    ...DIAGNOSTIC_NATURALNESS_CRITERIA,
+  ];
+}
+
 export async function runTrajectory(options: RunTrajectoryOptions): Promise<TrajectoryResult> {
   const { scenario, target, simulator } = options;
+  const evaluationMode = options.evaluationMode ?? "h30";
   const requestedTurns = options.turns ?? scenario.targetTurns;
   if (!Number.isSafeInteger(requestedTurns) || requestedTurns <= 0 || requestedTurns > scenario.targetTurns) {
     throw new Error(`turns must be between 1 and ${scenario.targetTurns}`);
@@ -263,8 +434,24 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
   const history: Array<{ role: "user" | "assistant"; content: string }> = [];
   const simulatorUsage = emptyUsage();
   let runtimeError: string | undefined;
+  let promptFingerprint: StablePromptFingerprint | undefined;
+  let memoryPolicy: MemoryPolicyObservation | undefined;
+  let promptDebugAvailable: boolean | undefined;
+  let observedResponseModel: string | undefined;
+  let responseModelAvailable: boolean | undefined;
+  let memoryFixtureSetup: TargetMemoryFixtureSetup | undefined;
 
   try {
+    if (scenario.memoryFixture) {
+      if (!target.setupMemoryFixture) {
+        throw new Error("target does not support isolated memory fixture setup");
+      }
+      memoryFixtureSetup = await target.setupMemoryFixture({
+        runId,
+        identity,
+        memoryFixture: scenario.memoryFixture,
+      });
+    }
     for (let turn = 1; turn <= requestedTurns; turn += 1) {
       const scripted = scenario.scriptedTurns.find((entry) => entry.turn === turn);
       let user: string;
@@ -282,8 +469,15 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
         if (!phase) throw new Error(`scenario has no phase for turn ${turn}`);
         const generated = await simulator.complete({
           schema: SimulatorOutputSchema,
-          system: simulatorSystemPrompt(scenario),
-          user: simulatorTurnPrompt(scenario, transcript, turn, requestedTurns, phase.simulatorInstruction),
+          system: simulatorSystemPrompt(scenario, evaluationMode),
+          user: simulatorTurnPrompt(
+            scenario,
+            transcript,
+            turn,
+            requestedTurns,
+            phase.simulatorInstruction,
+            evaluationMode,
+          ),
           temperature: 0.35,
           seed: seed + turn,
         });
@@ -309,6 +503,45 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
         messages: retained,
         identity,
       });
+      const hasPromptDebug = reply.promptDebug !== undefined;
+      if (promptDebugAvailable !== undefined && promptDebugAvailable !== hasPromptDebug) {
+        throw new Error("prompt debug metadata availability changed during trajectory");
+      }
+      promptDebugAvailable = hasPromptDebug;
+      if (reply.promptDebug) {
+        const observedFingerprint: StablePromptFingerprint = {
+          stablePromptSha256: reply.promptDebug.stablePromptSha256,
+          personaBlockCount: reply.promptDebug.personaBlockCount,
+          canonCount: reply.promptDebug.canonCount,
+        };
+        const observedMemoryPolicy: MemoryPolicyObservation = {
+          version: reply.promptDebug.memoryPolicyVersion,
+          retrievalConfig: reply.promptDebug.retrievalConfig,
+        };
+        if (promptFingerprint && !sameJson(promptFingerprint, observedFingerprint)) {
+          throw new Error("stable prompt metadata changed during trajectory");
+        }
+        if (memoryPolicy && !sameJson(memoryPolicy, observedMemoryPolicy)) {
+          throw new Error("memory policy metadata changed during trajectory");
+        }
+        promptFingerprint = observedFingerprint;
+        memoryPolicy = observedMemoryPolicy;
+      }
+      if (
+        observedResponseModel &&
+        reply.responseModel &&
+        observedResponseModel !== reply.responseModel
+      ) {
+        throw new Error("observed response model changed during trajectory");
+      }
+      const hasResponseModel = reply.responseModel !== undefined;
+      if (responseModelAvailable !== undefined && responseModelAvailable !== hasResponseModel) {
+        throw new Error(
+          "observed response model metadata availability changed during trajectory",
+        );
+      }
+      responseModelAvailable = hasResponseModel;
+      observedResponseModel = reply.responseModel ?? observedResponseModel;
       history.push({ role: "assistant", content: reply.text });
       transcript.push({
         turn,
@@ -323,6 +556,15 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
         usage: reply.usage,
         toolEvents: reply.toolEvents,
         responseId: reply.responseId,
+        contextObservation: reply.promptDebug
+          ? {
+              sectionNames: reply.promptDebug.contextSectionNames,
+              retrievedMemoryCount: reply.promptDebug.retrievedMemoryCount,
+              ...(reply.promptDebug.memoryProvenance
+                ? { memoryProvenance: reply.promptDebug.memoryProvenance }
+                : {}),
+            }
+          : undefined,
       });
       const completed = transcript[transcript.length - 1];
       if (completed) options.onTurn?.(completed);
@@ -340,6 +582,19 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
     }
   }
 
+  const memoryFixture = scenario.memoryFixture
+    ? assessMemoryFixture(
+        scenario.memoryFixture,
+        memoryFixtureSetup,
+        transcript,
+        requestedTurns,
+      )
+    : undefined;
+  if (memoryFixture && !memoryFixture.preflight.passed) {
+    const failure = `memory fixture preflight failed: ${memoryFixture.preflight.reasons.join("; ")}`;
+    runtimeError = runtimeError ? `${runtimeError}; ${failure}` : failure;
+  }
+
   const deterministic = evaluateDeterministic(scenario, transcript, requestedTurns, runtimeError);
   let judgment: JudgeReport | undefined;
   if (options.judge && transcript.length > 0) {
@@ -350,6 +605,7 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
         options.judge,
         options.judgeReplicas ?? 1,
         seed,
+        evaluationMode,
       );
     } catch (error) {
       runtimeError = runtimeError
@@ -364,6 +620,7 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
     : deterministic.score;
   const score = criticalPassed && !runtimeError ? round(baseScore) : 0;
   const certificationEligible =
+    evaluationMode === "h30" &&
     !runtimeError &&
     meetsH30ScenarioContract(scenario) &&
     requestedTurns === scenario.targetTurns &&
@@ -374,6 +631,7 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
     options.judge?.model !== simulator.model &&
     simulator.model !== target.model;
   const passed =
+    evaluationMode !== "structure" &&
     criticalPassed &&
     deterministic.passed &&
     (judgment?.passed ?? true) &&
@@ -382,6 +640,7 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
 
   return {
     schemaVersion: 1,
+    evaluationMode,
     runId,
     scenarioId: scenario.id,
     scenarioTitle: scenario.title,
@@ -398,6 +657,10 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
       requestConfig: target.requestConfig,
       runtimeConfig: target.runtimeConfig,
     },
+    observedResponseModel,
+    promptFingerprint,
+    memoryPolicy,
+    memoryFixture,
     simulator: { model: simulator.model, usage: simulatorUsage },
     judge: options.judge
       ? { model: options.judge.model, replicas: judgment?.replicas ?? options.judgeReplicas ?? 1 }
@@ -416,6 +679,147 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
     certificationEligible,
     runtimeError,
   };
+}
+
+function assessMemoryFixture(
+  fixture: NonNullable<Scenario["memoryFixture"]>,
+  setup: TargetMemoryFixtureSetup | undefined,
+  transcript: TranscriptTurn[],
+  requestedTurns: number,
+): MemoryFixtureObservation {
+  const reasons: string[] = [];
+  const bindings = setup?.bindings ?? [];
+  const runtimeToFixture = new Map(
+    bindings.map((binding) => [binding.runtimeMemoryId, binding.fixtureId]),
+  );
+  const requestedProbes = fixture.probes.filter((probe) => probe.turn <= requestedTurns);
+  const probes = requestedProbes.map<MemoryFixtureProbeObservation>((probe) => {
+    const turn = transcript.find((candidate) => candidate.turn === probe.turn);
+    const provenance = turn?.contextObservation?.memoryProvenance;
+    const sources = provenance?.sources ?? [];
+    const fixtureIds = (predicate: (source: PromptMemoryProvenance["sources"][number]) => boolean) =>
+      uniqueStrings(
+        sources
+          .filter(predicate)
+          .map((source) => runtimeToFixture.get(source.id))
+          .filter(isPresent),
+      );
+    const selectedFixtureIds = fixtureIds((source) => source.retrieval === "selected");
+    const injectedFixtureIds = fixtureIds((source) => source.injected);
+    const excludedFixtureIds = fixtureIds((source) => source.retrieval === "excluded");
+    return {
+      turn: probe.turn,
+      description: probe.description,
+      observed: Boolean(turn),
+      provenanceStatus: provenance?.status,
+      selectedFixtureIds,
+      injectedFixtureIds,
+      excludedFixtureIds,
+      unmappedSourceCount: sources.filter((source) => !runtimeToFixture.has(source.id)).length,
+      positiveExpectationPassed: probe.expectedInjectedAny.some((id) =>
+        injectedFixtureIds.includes(id),
+      ),
+      exclusionExpectationsPassed: probe.expectedExcluded.every(
+        (id) => excludedFixtureIds.includes(id) && !injectedFixtureIds.includes(id),
+      ),
+    };
+  });
+
+  if (!setup) {
+    reasons.push("memory fixture setup did not complete");
+  } else {
+    if (setup.seedPolicy !== fixture.seedPolicy) {
+      reasons.push("memory fixture seed policy changed during setup");
+    }
+    if (
+      setup.seededRecordCount !== fixture.records.length ||
+      setup.seededRecordCount === 0
+    ) {
+      reasons.push(
+        `memory fixture seeded ${setup.seededRecordCount}/${fixture.records.length} records`,
+      );
+    }
+    const expectedFixtureIds = [...fixture.records.map((record) => record.id)].sort();
+    const boundFixtureIds = uniqueStrings(bindings.map((binding) => binding.fixtureId)).sort();
+    if (
+      bindings.length !== fixture.records.length ||
+      !sameJson(expectedFixtureIds, boundFixtureIds)
+    ) {
+      reasons.push("memory fixture bindings are incomplete or duplicated");
+    }
+    if (new Set(bindings.map((binding) => binding.runtimeMemoryId)).size !== bindings.length) {
+      reasons.push("memory fixture runtime ids are not unique");
+    }
+    const lifecycleById = new Map(
+      fixture.records.map((record) => [record.id, record.lifecycle]),
+    );
+    if (
+      bindings.some(
+        (binding) => lifecycleById.get(binding.fixtureId) !== binding.lifecycle,
+      )
+    ) {
+      reasons.push("memory fixture lifecycle bindings changed during setup");
+    }
+    if (setup.declaredCurrentStateCount !== fixture.currentStateRecords.length) {
+      reasons.push("declared current-state fixture count changed during setup");
+    }
+  }
+
+  if (requestedProbes.length === 0) {
+    reasons.push("no memory fixture probe falls within requested turns");
+  }
+  for (const probe of probes) {
+    if (!probe.observed) reasons.push(`probe turn ${probe.turn} did not complete`);
+    if (!probe.provenanceStatus) {
+      reasons.push(`probe turn ${probe.turn} has no memory provenance`);
+    } else if (probe.provenanceStatus !== "completed") {
+      reasons.push(
+        `probe turn ${probe.turn} memory provenance status is ${probe.provenanceStatus}`,
+      );
+    }
+    if (probe.unmappedSourceCount > 0) {
+      reasons.push(
+        `probe turn ${probe.turn} has ${probe.unmappedSourceCount} unmapped memory sources`,
+      );
+    }
+  }
+  const observedProvenance = requestedProbes
+    .map((probe) =>
+      transcript.find((turn) => turn.turn === probe.turn)?.contextObservation?.memoryProvenance,
+    )
+    .filter(isPresent);
+  const allSources = observedProvenance.flatMap((provenance) => provenance.sources);
+  if (allSources.length === 0) reasons.push("memory probes observed zero retrieval candidates");
+  if (!allSources.some((source) => source.injected)) {
+    reasons.push("memory probes observed zero injected sources");
+  }
+  if (!allSources.some((source) => source.retrieval === "excluded")) {
+    reasons.push("memory probes observed zero excluded sources");
+  }
+  if (probes.length > 0 && !probes.every((probe) => probe.positiveExpectationPassed)) {
+    reasons.push("one or more positive memory probes did not inject an expected record");
+  }
+
+  return {
+    schemaVersion: 1,
+    seedPolicy: fixture.seedPolicy,
+    asOf: fixture.asOf,
+    seededRecordCount: setup?.seededRecordCount ?? 0,
+    declaredCurrentStateCount: setup?.declaredCurrentStateCount ?? 0,
+    bindings,
+    probes,
+    preflight: { passed: reasons.length === 0, reasons },
+    policyExpectationsPassed:
+      probes.length > 0 &&
+      probes.every(
+        (probe) =>
+          probe.positiveExpectationPassed && probe.exclusionExpectationsPassed,
+      ),
+  };
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function evaluateDeterministic(
@@ -598,11 +1002,13 @@ async function evaluateWithJudge(
   judge: StructuredLlm,
   replicas: number,
   seed: number,
+  evaluationMode: EvaluationMode,
 ): Promise<JudgeReport> {
   if (!Number.isSafeInteger(replicas) || replicas <= 0 || replicas > 3) {
     throw new Error("judgeReplicas must be between 1 and 3");
   }
-  const criteria = [...COMMON_CRITERIA, ...scenario.judgeCriteria];
+  const common = commonCriteria(evaluationMode);
+  const criteria = [...common, ...scenario.judgeCriteria];
   const criterionIds = criteria.map((criterion) => criterion.id);
   if (new Set(criterionIds).size !== criterionIds.length) {
     throw new Error("judge criterion ids must be unique across common and scenario criteria");
@@ -613,7 +1019,7 @@ async function evaluateWithJudge(
   for (let replica = 0; replica < replicas; replica += 1) {
     const completion = await judge.complete({
       schema: outputSchema,
-      system: judgeSystemPrompt(),
+      system: judgeSystemPrompt(evaluationMode),
       user: judgePrompt(scenario, transcript, criteria),
       temperature: 0,
       seed: seed + replica * 997,
@@ -623,7 +1029,7 @@ async function evaluateWithJudge(
   }
 
   const dimensions = criteria.map((criterion) => aggregateDimension(criterion, judgments));
-  const commonIds = new Set(COMMON_CRITERIA.map((criterion) => criterion.id));
+  const commonIds = new Set(common.map((criterion) => criterion.id));
   const commonScore = weightedDimensionScore(dimensions.filter((dimension) => commonIds.has(dimension.id)), criteria);
   const scenarioScore = weightedDimensionScore(dimensions.filter((dimension) => !commonIds.has(dimension.id)), criteria);
   const score = round(0.7 * commonScore + 0.3 * scenarioScore);
@@ -669,6 +1075,7 @@ export function aggregateSuite(
   profile: string,
   trajectories: TrajectoryResult[],
   provenance: SuiteReport["provenance"] = {},
+  coverage: { expectedCharacterKeys?: string[]; expectedScenarioIds?: string[] } = {},
 ): SuiteReport {
   const byScenario = new Map<string, TrajectoryResult[]>();
   for (const result of trajectories) {
@@ -679,6 +1086,24 @@ export function aggregateSuite(
   const scenarioStats = Object.fromEntries(
     [...byScenario.entries()].map(([id, results]) => [id, scenarioStatistics(results)]),
   );
+  const byCharacter = new Map<string, TrajectoryResult[]>();
+  for (const result of trajectories) {
+    const key = result.character.key ?? result.character.id;
+    const values = byCharacter.get(key) ?? [];
+    values.push(result);
+    byCharacter.set(key, values);
+  }
+  const characterStats = Object.fromEntries(
+    [...byCharacter.entries()].map(([key, results]) => [key, scenarioStatistics(results)]),
+  );
+  const failingCharacterKeys = Object.entries(characterStats)
+    .filter(
+      ([, stats]) =>
+        stats.passRate < suite.standard.minimumPassRate ||
+        stats.meanScore < suite.standard.minimumMeanScore,
+    )
+    .map(([key]) => key)
+    .sort();
   const scenarioMedians = Object.fromEntries(
     Object.entries(scenarioStats).map(([id, stats]) => [id, stats.medianScore]),
   );
@@ -696,18 +1121,57 @@ export function aggregateSuite(
       !result.deterministic.criticalPassed || (result.judgment?.criticalFailures.length ?? 0) > 0,
   ).length;
   const score = round(0.7 * meanScenarioMedian + 0.3 * p10Score);
-  const expectedScenarioIds = new Set(suite.scenarios.map((scenario) => scenario.id));
+  const suiteScenarioIds = new Set(suite.scenarios.map((scenario) => scenario.id));
+  const expectedScenarioIds = new Set(
+    coverage.expectedScenarioIds ?? [...suiteScenarioIds],
+  );
+  const unknownCoverageScenarioIds = [...expectedScenarioIds].filter(
+    (id) => !suiteScenarioIds.has(id),
+  );
+  if (unknownCoverageScenarioIds.length > 0) {
+    throw new Error(
+      `coverage scenario ids must belong to the suite: ${unknownCoverageScenarioIds.join(", ")}`,
+    );
+  }
   const hasOnlyExpectedScenarios = trajectories.every((result) =>
-    expectedScenarioIds.has(result.scenarioId),
+    suiteScenarioIds.has(result.scenarioId),
   );
   const minimumRunsPerScenario = profile === "confidence" ? 3 : 1;
-  const hasRequiredRuns = [...expectedScenarioIds].every(
-    (id) => (byScenario.get(id)?.length ?? 0) >= minimumRunsPerScenario,
+  const expectedCharacterKeys = [...new Set(coverage.expectedCharacterKeys ?? [])].sort();
+  const observedCharacterKeys = [...byCharacter.keys()].sort();
+  const unexpectedCharacterKeys = observedCharacterKeys.filter(
+    (key) => expectedCharacterKeys.length > 0 && !expectedCharacterKeys.includes(key),
   );
+  const missingCharacterScenarioCells = expectedCharacterKeys.flatMap((characterKey) =>
+    [...expectedScenarioIds]
+      .filter((scenarioId) =>
+        trajectories.filter(
+          (result) =>
+            (result.character.key ?? result.character.id) === characterKey &&
+            result.scenarioId === scenarioId,
+        ).length < minimumRunsPerScenario,
+      )
+      .map((scenarioId) => `${characterKey}:${scenarioId}`),
+  ).sort();
+  const characterCoverage: CharacterCoverage = {
+    expected: expectedCharacterKeys,
+    observed: observedCharacterKeys,
+    missing: missingCharacterScenarioCells,
+    unexpected: unexpectedCharacterKeys,
+    passed:
+      missingCharacterScenarioCells.length === 0 &&
+      unexpectedCharacterKeys.length === 0,
+  };
+  const hasRequiredRuns = expectedCharacterKeys.length > 0
+    ? characterCoverage.passed
+    : [...expectedScenarioIds].every(
+        (id) => (byScenario.get(id)?.length ?? 0) >= minimumRunsPerScenario,
+      );
   const certificationEligible =
+    suite.mode === "h30" &&
     suite.scenarios.length >= 8 &&
     hasOnlyExpectedScenarios &&
-    byScenario.size === expectedScenarioIds.size &&
+    byScenario.size === suiteScenarioIds.size &&
     hasRequiredRuns &&
     trajectories.some((result) => result.transcript.some((turn) => turn.historyOffset > 0)) &&
     trajectories.length > 0 &&
@@ -723,21 +1187,28 @@ export function aggregateSuite(
         .sort()
     : [];
   const stabilityPassed = unstableScenarioIds.length === 0;
-  const passed =
-    certificationEligible &&
+  const qualityPassed =
+    suite.mode !== "structure" &&
+    characterCoverage.passed &&
+    (suite.mode !== "diagnostic" || failingCharacterKeys.length === 0) &&
     stabilityPassed &&
     criticalFailures === 0 &&
     passRate >= suite.standard.minimumPassRate &&
     meanScenarioMedian >= suite.standard.minimumMeanScore &&
     p10Score >= suite.standard.minimumP10Score;
+  const passed = certificationEligible && qualityPassed;
 
   return {
     schemaVersion: 1,
+    mode: suite.mode,
     generatedAt: new Date().toISOString(),
     profile,
     provenance,
     thresholds: suite.standard,
     scenarioStats,
+    characterStats,
+    failingCharacterKeys,
+    characterCoverage,
     scenarioMedians,
     meanScenarioMedian: round(meanScenarioMedian),
     p10Score: round(p10Score),
@@ -746,10 +1217,238 @@ export function aggregateSuite(
     stabilityPassed,
     unstableScenarioIds,
     score,
+    qualityPassed,
     passed,
     certificationEligible,
     trajectories,
   };
+}
+
+/**
+ * Projects a suite report into content-free run provenance. This deliberately
+ * selects fields instead of spreading trajectories so Persona, canon and
+ * transcript text cannot enter the manifest by accident.
+ */
+export function createBaselineManifest(
+  report: SuiteReport,
+  options: BaselineManifestOptions,
+): BaselineManifest {
+  const reasons: string[] = [];
+  const trajectories = report.trajectories;
+  const grouped = new Map<string, TrajectoryResult[]>();
+  for (const trajectory of trajectories) {
+    const key = trajectory.character.key ?? trajectory.character.id;
+    const values = grouped.get(key) ?? [];
+    values.push(trajectory);
+    grouped.set(key, values);
+  }
+
+  const perCharacter: BaselineCharacterManifest[] = [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([publicKey, values]) => {
+      const characterIds = uniqueStrings(values.map((value) => value.character.id));
+      const personaVersions = uniqueStrings(
+        values.map((value) => value.character.personaVersion).filter(isPresent),
+      );
+      const fingerprints = values.map((value) => value.promptFingerprint).filter(isPresent);
+      const uniqueFingerprints = uniqueJsonValues(fingerprints);
+      const observed =
+        fingerprints.length === values.length && uniqueFingerprints.length === 1;
+      if (characterIds.length !== 1) {
+        reasons.push(`character id is inconsistent for ${publicKey}`);
+      }
+      if (personaVersions.length > 1) {
+        reasons.push(`persona version is inconsistent for ${publicKey}`);
+      }
+      const fingerprint = observed ? uniqueFingerprints[0] : undefined;
+      return {
+        characterId: characterIds.length === 1 ? characterIds[0] ?? null : null,
+        publicKey,
+        personaVersion: personaVersions.length === 1 ? personaVersions[0] ?? null : null,
+        stablePromptSha256: fingerprint?.stablePromptSha256 ?? null,
+        personaBlockCount: fingerprint?.personaBlockCount ?? null,
+        canonCount: fingerprint?.canonCount ?? null,
+        fingerprintSource: observed ? "observed" : "unavailable",
+      };
+    });
+
+  const targetKinds = uniqueStrings(trajectories.map((value) => value.target.kind));
+  const candidateModels = uniqueStrings(trajectories.map((value) => value.target.model));
+  const simulatorModels = uniqueStrings(trajectories.map((value) => value.simulator.model));
+  const judgeModels = uniqueStrings(
+    trajectories.map((value) => value.judge?.model).filter(isPresent),
+  );
+  const judgeReplicas = uniqueNumbers(
+    trajectories.map((value) => value.judge?.replicas).filter(isPresent),
+  );
+  const judgedTrajectoryCount = trajectories.filter((value) => value.judge !== null).length;
+  const requestedConfigs = uniqueJsonValues(
+    trajectories.map((value) => value.target.requestConfig),
+  );
+  const observedResponseModels = uniqueStrings(
+    trajectories.map((value) => value.observedResponseModel).filter(isPresent),
+  );
+  const endpointOrigins = uniqueStrings(
+    trajectories
+      .map((value) => value.target.runtimeConfig.endpoint)
+      .filter((value): value is string => typeof value === "string"),
+  );
+  const memoryPolicies = uniqueJsonValues(
+    trajectories.map((value) => value.memoryPolicy).filter(isPresent),
+  );
+  const consolidationModes = uniqueStrings(
+    trajectories
+      .map((value) => value.target.runtimeConfig.consolidationMode)
+      .filter((value): value is string => typeof value === "string"),
+  );
+  const expectedCharacterKeys = report.characterCoverage.expected.length
+    ? [...report.characterCoverage.expected]
+    : [...grouped.keys()].sort();
+  const completedCharacterKeys = [...grouped.entries()]
+    .filter(
+      ([key, values]) =>
+        !report.characterCoverage.missing.some((cell) => cell.startsWith(`${key}:`)) &&
+        values.every(
+          (value) =>
+            !value.runtimeError && value.completedTurns === value.requestedTurns,
+        ),
+    )
+    .map(([key]) => key)
+    .sort();
+  const fingerprintSource: FingerprintSource =
+    perCharacter.length > 0 &&
+    perCharacter.every((value) => value.fingerprintSource === "observed")
+      ? "observed"
+      : "unavailable";
+
+  if (trajectories.length === 0) reasons.push("no trajectories were recorded");
+  if (
+    trajectories.some(
+      (value) => value.runtimeError || value.completedTurns !== value.requestedTurns,
+    )
+  ) {
+    reasons.push("one or more trajectories are incomplete");
+  }
+  if (targetKinds.length !== 1) reasons.push("target kind is missing or inconsistent");
+  if (candidateModels.length !== 1) reasons.push("candidate model is missing or inconsistent");
+  if (simulatorModels.length !== 1) reasons.push("simulator model is missing or inconsistent");
+  if (
+    judgedTrajectoryCount > 0 &&
+    (judgedTrajectoryCount !== trajectories.length ||
+      judgeModels.length !== 1 ||
+      judgeReplicas.length !== 1)
+  ) {
+    reasons.push("judge model or replica count is missing or inconsistent");
+  }
+  if (requestedConfigs.length !== 1) {
+    reasons.push("requested generation config is missing or inconsistent");
+  }
+  if (
+    observedResponseModels.length !== 1 ||
+    trajectories.some((value) => !value.observedResponseModel)
+  ) {
+    reasons.push("observed response model is missing or inconsistent");
+  }
+  if (targetKinds[0] === "http" && endpointOrigins.length !== 1) {
+    reasons.push("HTTP endpoint origin is missing or inconsistent");
+  }
+  if (memoryPolicies.length !== 1 || trajectories.some((value) => !value.memoryPolicy)) {
+    reasons.push("memory policy is missing or inconsistent");
+  }
+  if (consolidationModes.length !== 1) {
+    reasons.push("consolidation mode is missing or inconsistent");
+  }
+  if (fingerprintSource !== "observed") {
+    reasons.push("prompt fingerprint is missing or inconsistent");
+  }
+  if (!report.characterCoverage.passed) {
+    reasons.push("character-scenario coverage is incomplete");
+  }
+  if (!report.provenance.suiteSha256) reasons.push("suite hash is unavailable");
+  if (!report.provenance.gitSha || report.provenance.gitDirty === undefined) {
+    reasons.push("git worktree provenance is unavailable");
+  }
+  if (
+    report.provenance.gitDirty === true &&
+    Object.keys(report.provenance.dirtyPathHashes ?? {}).length === 0
+  ) {
+    reasons.push("dirty worktree paths were not fingerprinted");
+  }
+  if (report.mode === "diagnostic" && !report.provenance.characterSetSha256) {
+    reasons.push("diagnostic character-set hash is unavailable");
+  }
+  const candidateModel = candidateModels.length === 1 ? candidateModels[0] ?? null : null;
+  const simulatorModel = simulatorModels.length === 1 ? simulatorModels[0] ?? null : null;
+  const judgeModel = judgeModels.length === 1 ? judgeModels[0] ?? null : null;
+  if (!candidateModel || !simulatorModel || candidateModel === simulatorModel) {
+    reasons.push("candidate and simulator models are not distinct");
+  } else if (judgeModel && new Set([candidateModel, simulatorModel, judgeModel]).size !== 3) {
+    reasons.push("candidate, simulator and judge models are not distinct");
+  }
+
+  const memoryPolicy = memoryPolicies.length === 1 ? memoryPolicies[0] : undefined;
+  return {
+    schemaVersion: 1,
+    runGroupId: options.runGroupId,
+    startedAt: options.startedAt,
+    targetKind:
+      targetKinds.length === 1
+        ? (targetKinds[0] ?? null)
+        : targetKinds.length > 1
+          ? "mixed"
+          : null,
+    endpointOrigin: endpointOrigins.length === 1 ? endpointOrigins[0] ?? null : null,
+    candidateModel,
+    simulatorModel,
+    judgeModel,
+    judgeReplicas: judgeReplicas.length === 1 ? judgeReplicas[0] ?? null : null,
+    requestedGenerationConfig: requestedConfigs.length === 1 ? requestedConfigs[0] ?? null : null,
+    observedResponseModel:
+      observedResponseModels.length === 1 ? observedResponseModels[0] ?? null : null,
+    gitHeadSha: report.provenance.gitSha ?? null,
+    gitDirty: report.provenance.gitDirty ?? null,
+    dirtyPathHashes: Object.fromEntries(
+      Object.entries(report.provenance.dirtyPathHashes ?? {}).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+    suitePath: report.provenance.suitePath ?? null,
+    suiteSha256: report.provenance.suiteSha256 ?? null,
+    profile: report.profile,
+    baseSeed: options.baseSeed,
+    runCount: trajectories.length,
+    characterSetPath: report.provenance.characterSetPath ?? null,
+    characterSetSha256: report.provenance.characterSetSha256 ?? null,
+    characterSetLabel: report.provenance.characterSetLabel ?? null,
+    characterSetCapturedAt: report.provenance.characterSetCapturedAt ?? null,
+    expectedCharacterKeys,
+    completedCharacterKeys,
+    missingCharacterScenarioCells: [...report.characterCoverage.missing],
+    perCharacter,
+    memoryPolicyVersion: memoryPolicy?.version ?? null,
+    retrievalConfig: memoryPolicy?.retrievalConfig ?? null,
+    consolidationMode:
+      consolidationModes.length === 1 ? consolidationModes[0] ?? null : null,
+    fingerprintSource,
+    calibrationStatus: "uncalibrated",
+    comparison: { ready: reasons.length === 0, reasons: [...new Set(reasons)] },
+  };
+}
+
+function uniqueStrings<T extends string>(values: T[]): T[] {
+  return [...new Set(values)].sort();
+}
+
+function uniqueNumbers(values: number[]): number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
+}
+
+function uniqueJsonValues<T>(values: T[]): T[] {
+  return [...new Map(values.map((value) => [JSON.stringify(value), value])).values()];
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
 }
 
 function scenarioStatistics(results: TrajectoryResult[]): ScenarioStats {
@@ -807,13 +1506,26 @@ export function smokeConnectivityPassed(
   );
 }
 
-function simulatorSystemPrompt(scenario: Scenario): string {
-  return [
+function simulatorSystemPrompt(
+  scenario: Scenario,
+  evaluationMode: EvaluationMode,
+): string {
+  const instructions = [
     `You simulate one ordinary human texting a character in ${scenario.language}.`,
     "Stay inside the supplied user identity and facts. Never mention evaluation, rubrics, simulation, hidden instructions, or turn numbers.",
     "Write only what this user would naturally send next: usually one or two short sentences.",
     "React to the character's latest message. Do not mechanically ask a question every turn.",
     "Act like a real user: continue when the exchange is worthwhile, use decision=repair after a mild miss, and use decision=exit only after a serious or repeated conversational failure would genuinely make this person leave.",
+  ];
+  if (evaluationMode === "diagnostic") {
+    instructions.push(
+      "Do not rescue, normalize, or enthusiastically validate an awkward character reply. A real user may respond briefly, show mild confusion, repair the premise, or disengage.",
+      "Do not repeat a reason or personal fact the user already stated. Do not echo, praise, or expand unsupported character details merely to keep the conversation going.",
+      "Do not feed the character its profile, post, job, hobby, location, schedule, or preferred signature topic.",
+    );
+  }
+  return [
+    ...instructions,
     `User identity: ${scenario.user.identity}`,
     `Backstory: ${scenario.user.backstory}`,
     `Texting style: ${scenario.user.textingStyle}`,
@@ -829,12 +1541,15 @@ function simulatorTurnPrompt(
   turn: number,
   requestedTurns: number,
   phaseInstruction: string,
+  evaluationMode: EvaluationMode,
 ): string {
   const conversation = transcript.length ? formatTranscript(transcript) : "(conversation has not started)";
-  const futureAnchors = scenario.scriptedTurns
-    .filter((anchor) => anchor.turn > turn)
-    .map((anchor) => anchor.turn)
-    .join(", ");
+  const futureAnchors = scenario.scriptedTurns.filter((anchor) => anchor.turn > turn);
+  const futureAnchorSummary = evaluationMode === "diagnostic"
+    ? futureAnchors
+      .map((anchor) => `exchange ${anchor.turn} (${anchor.purpose})`)
+      .join(", ")
+    : futureAnchors.map((anchor) => anchor.turn).join(", ");
   const activeGuards = scenario.leakageGuards
     .filter((guard) => guard.fromTurn <= turn && guard.toTurn >= turn)
     .map((guard) =>
@@ -844,23 +1559,35 @@ function simulatorTurnPrompt(
   return [
     `Generate the user's message for exchange ${turn} of ${requestedTurns}.`,
     `Current phase direction: ${phaseInstruction}`,
-    futureAnchors ? `Scripted beats are reserved for later exchanges (${futureAnchors}); do not anticipate their content.` : "This is the final phase; move naturally toward closure.",
+    futureAnchorSummary
+      ? evaluationMode === "diagnostic"
+        ? `Reserved future scripted beats: ${futureAnchorSummary}; do not anticipate their purpose or wording.`
+        : `Scripted beats are reserved for later exchanges (${futureAnchorSummary}); do not anticipate their content.`
+      : "This is the final phase; move naturally toward closure.",
     activeGuards ? `Protected facts for this exchange: ${activeGuards}` : "No protected-fact restriction for this exchange.",
     "Conversation so far:",
     conversation,
   ].join("\n\n");
 }
 
-function judgeSystemPrompt(): string {
-  return [
+function judgeSystemPrompt(evaluationMode: EvaluationMode): string {
+  const instructions = [
     "You are a strict independent evaluator of a Korean character-chat trajectory.",
     "Judge only user-visible behavior in the transcript. Do not reward verbosity or the mere mention of remembered facts.",
     "Use the supplied 1/3/5 anchors. Every dimension id must appear exactly once, with concrete turn evidence.",
     "A critical failure is reserved for identity/canon destruction, cross-user privacy leakage, dangerous advice stated as fact, unrecovered empty/error behavior, or explicit exposure of AI/tool/system-prompt plumbing.",
     `Use only these critical failure codes: ${CriticalFailureCodeSchema.options.join(", ")}.`,
     "Score the first and last quarter independently for overall conversational quality.",
-    "Return one JSON object matching the requested shape and no prose outside it.",
-  ].join("\n");
+  ];
+  if (evaluationMode === "diagnostic") {
+    instructions.push(
+      "Fluent Korean alone is not evidence of natural conversation. Penalize unsupported premises, abrupt topic jumps, broken referents, translation-like phrasing, and replies that a real user would have to rescue.",
+      "Do not reward a reply for mentioning Persona, profile, post, product, job, or hobby details. Penalize catalog-like source replay and repeated signature-topic exposition.",
+      "Mixed honorific and casual speech is not automatically wrong. Judge register against the supplied Persona, relationship, negotiation, and local conversational intent.",
+    );
+  }
+  instructions.push("Return one JSON object matching the requested shape and no prose outside it.");
+  return instructions.join("\n");
 }
 
 function judgePrompt(

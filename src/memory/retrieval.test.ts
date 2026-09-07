@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { rankByRetrievalScore, type Scorable } from "./retrieval.js";
+import {
+  rankByRetrievalScore,
+  scoreRetrievalCandidates,
+  type Scorable,
+} from "./retrieval.js";
 
 const weights = { recency: 1, importance: 1, relevance: 1 };
 
@@ -44,5 +48,35 @@ describe("rankByRetrievalScore", () => {
 
   it("returns empty for no candidates", () => {
     expect(rankByRetrievalScore([], [1, 0], { weights, recencyDecay: 0.99, topK: 5 })).toEqual([]);
+  });
+
+  it("keeps content-free provenance for selected and excluded candidates", () => {
+    const candidates = scoreRetrievalCandidates(
+      [
+        mem("relevant", [1, 0, 0], 8, "2026-01-03T00:00:00Z"),
+        mem("recent", [0, 1, 0], 6, "2026-01-02T00:00:00Z"),
+        mem("outside", [0, 0, 1], 1, "2026-01-01T00:00:00Z"),
+      ],
+      [1, 0, 0],
+      { weights, recencyDecay: 0.99, topK: 2 },
+    );
+
+    expect(candidates.map(({ item, rank, decision, reason }) => ({
+      id: item.id,
+      rank,
+      decision,
+      reason,
+    }))).toEqual([
+      { id: "relevant", rank: 1, decision: "selected", reason: "selected_top_k" },
+      { id: "recent", rank: 2, decision: "selected", reason: "selected_top_k" },
+      { id: "outside", rank: 3, decision: "excluded", reason: "outside_top_k" },
+    ]);
+    expect(candidates[0]?.rawRelevance).toBe(1);
+    expect(candidates.every((candidate) => Number.isFinite(candidate.score))).toBe(true);
+    expect(rankByRetrievalScore(
+      candidates.map((candidate) => candidate.item),
+      [1, 0, 0],
+      { weights, recencyDecay: 0.99, topK: 2 },
+    ).map((item) => item.id)).toEqual(["relevant", "recent"]);
   });
 });

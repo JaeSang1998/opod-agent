@@ -9,6 +9,7 @@ interface CharacterRow {
 }
 
 interface BlockRow {
+  id: string;
   title: string;
   content: string;
 }
@@ -20,9 +21,10 @@ interface MemoryRow {
 /**
  * Reads the persona straight from the OPOD Postgres schema (docs/adr/0002):
  * the character row, its active persona blocks in assembly order, and the
- * canonical character memories. No transform — what operators author in the
- * admin is exactly what the character is. Block/memory ordering mirrors the
- * admin's ([sort_order, created_at, id] / [created_at, id]).
+ * canonical character memories. This raw adapter does not infer policy from a
+ * title: it preserves authored content and exposes the stable block id so a
+ * separate read adapter may attach explicit routing. Block/memory ordering
+ * mirrors the admin's ([sort_order, created_at, id] / [created_at, id]).
  */
 export class PostgresPersonaStore implements PersonaStore {
   constructor(private readonly pool: Pool) {}
@@ -42,7 +44,7 @@ export class PostgresPersonaStore implements PersonaStore {
 
     const [blocks, memories] = await Promise.all([
       this.pool.query<BlockRow>(
-        `SELECT title, content FROM opod.character_personas
+        `SELECT id, title, content FROM opod.character_personas
          WHERE character_id = $1 AND deleted_at IS NULL
          ORDER BY sort_order ASC, created_at ASC, id ASC`,
         [row.id],
@@ -59,7 +61,7 @@ export class PostgresPersonaStore implements PersonaStore {
       characterId: row.id,
       name: row.display_name,
       bio: row.bio,
-      blocks: blocks.rows.map((b) => ({ title: b.title, content: b.content })),
+      blocks: blocks.rows.map((b) => ({ id: b.id, title: b.title, content: b.content })),
       canonMemories: memories.rows.map((m) => m.content),
     };
   }

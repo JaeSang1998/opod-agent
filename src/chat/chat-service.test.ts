@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { ChatService } from "./chat-service.js";
 import { StubPersonaStore } from "../persona/stub-persona-store.js";
@@ -9,6 +10,7 @@ import { buildDefaultTools } from "../tools/index.js";
 import { noopLogger } from "../bootstrap/logger.js";
 import type { ChatCompletionRequest } from "../protocol/index.js";
 import { BOND_XP_BY_GRADE } from "../memory/bond.js";
+import type { Persona } from "../persona/persona.js";
 
 const config = {
   retrieveTopK: 6,
@@ -61,6 +63,11 @@ class ThrowingMemoryStore extends StubMemoryStore {
   override async retrieve(...args: Parameters<StubMemoryStore["retrieve"]>) {
     if (this.failOn.retrieve) throw new Error("retrieve boom");
     return super.retrieve(...args);
+  }
+
+  override async retrieveWithTrace(...args: Parameters<StubMemoryStore["retrieveWithTrace"]>) {
+    if (this.failOn.retrieve) throw new Error("retrieve boom");
+    return super.retrieveWithTrace(...args);
   }
 
   override async getCoreMemory(...args: Parameters<StubMemoryStore["getCoreMemory"]>) {
@@ -208,6 +215,175 @@ describe("ChatService.prepare", () => {
   });
 });
 
+describe("ChatService Persona routing", () => {
+  const routedPersona = {
+    characterId: "shared-router-fixture",
+    name: "Router Fixture",
+    bio: "Synthetic identity used to test the shared Persona path.",
+    blocks: [
+      {
+        id: "shared-identity",
+        title: "Core",
+        content: "Keeps a calm, wry tone.",
+        kind: "identity",
+        injection: "always",
+      },
+      {
+        id: "first-contact",
+        title: "Arrival",
+        content: "Start with a little distance.",
+        kind: "example",
+        injection: "start_only",
+      },
+      {
+        id: "radio-lore",
+        title: "Background",
+        content: "Repairs old radios as a hobby.",
+        kind: "lore",
+        injection: "retrieved",
+      },
+      {
+        id: "feed-note",
+        title: "Production",
+        content: "Use amber colors in feed images.",
+        kind: "creator_note",
+        injection: "never_prompt",
+      },
+    ],
+    canonMemories: [],
+  } satisfies Persona;
+
+  const selectorInputs: Array<{
+    characterId: string;
+    blocks: readonly Persona["blocks"][number][];
+    query: string;
+  }> = [];
+  const selector = {
+    async selectRelevantBlockIds(input: {
+      characterId: string;
+      blocks: readonly Persona["blocks"][number][];
+      query: string;
+    }) {
+      selectorInputs.push(input);
+      return input.query.toLowerCase().includes("radio") ? ["radio-lore"] : [];
+    },
+  };
+
+  function makeRoutedService(
+    personaSelector: typeof selector | undefined = selector,
+  ) {
+    return new ChatService(
+      new FakeProvider(),
+      new StubPersonaStore([routedPersona]),
+      new StubMemoryStore(),
+      new StubJobQueue(),
+      config,
+      noopLogger,
+      [],
+      () => new Date("2026-09-07T04:00:00Z"),
+      personaSelector,
+    );
+  }
+
+  it("keeps always stable, starts once, retrieves only when selected, and never leaks creator notes", async () => {
+    selectorInputs.length = 0;
+    const service = makeRoutedService();
+    const first = await service.prepare(
+      { messages: [{ role: "user", content: "hi" }] },
+      { ...fullCtx, characterId: routedPersona.characterId },
+    );
+    const relevant = await service.prepare(
+      {
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "hello" },
+          { role: "user", content: "Do you like old radios?" },
+        ],
+      },
+      { ...fullCtx, characterId: routedPersona.characterId, turnId: "turn-2" },
+    );
+    const unrelated = await service.prepare(
+      {
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "hello" },
+          { role: "user", content: "Let's talk about lunch." },
+        ],
+      },
+      { ...fullCtx, characterId: routedPersona.characterId, turnId: "turn-3" },
+    );
+
+    const stable = String(first.request.messages[0]?.content);
+    expect(stable).toContain("Keeps a calm, wry tone.");
+    expect(stable).not.toContain("Start with a little distance.");
+    expect(stable).not.toContain("Repairs old radios as a hobby.");
+    expect(stable).not.toContain("Use amber colors in feed images.");
+    expect(relevant.request.messages[0]?.content).toBe(stable);
+    expect(unrelated.request.messages[0]?.content).toBe(stable);
+    expect(relevant.promptDebug?.stablePromptSha256).toBe(
+      first.promptDebug?.stablePromptSha256,
+    );
+
+    expect(lastMessage(first).content).toContain("Start with a little distance.");
+    expect(lastMessage(first).content).not.toContain("Repairs old radios as a hobby.");
+    expect(lastMessage(relevant).content).not.toContain("Start with a little distance.");
+    expect(lastMessage(relevant).content).toContain("Repairs old radios as a hobby.");
+    expect(lastMessage(unrelated).content).not.toContain("Repairs old radios as a hobby.");
+    expect(JSON.stringify(first.request.messages)).not.toContain("amber colors");
+    expect(JSON.stringify(relevant.request.messages)).not.toContain("amber colors");
+    expect(selectorInputs).toHaveLength(3);
+    expect(selectorInputs.every((input) => input.characterId === routedPersona.characterId)).toBe(
+      true,
+    );
+    expect(selectorInputs.flatMap((input) => input.blocks.map((block) => block.id))).toEqual([
+      "radio-lore",
+      "radio-lore",
+      "radio-lore",
+    ]);
+
+    expect(first.promptDebug?.contextSectionNames).toContain("persona_start");
+    expect(relevant.promptDebug?.contextSectionNames).toContain("persona_retrieved");
+    expect(unrelated.promptDebug?.contextSectionNames).not.toContain("persona_retrieved");
+    expect(relevant.promptDebug?.personaProvenance?.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "radio-lore",
+          destination: "turn_context",
+          reason: "retrieved_for_turn",
+        }),
+        expect.objectContaining({
+          id: "first-contact",
+          destination: "excluded",
+          reason: "start_only_after_first_turn",
+        }),
+        expect.objectContaining({
+          id: "feed-note",
+          destination: "excluded",
+          reason: "never_prompt",
+        }),
+      ]),
+    );
+    const debug = JSON.stringify(relevant.promptDebug?.personaProvenance);
+    expect(debug).not.toContain("radios");
+    expect(debug).not.toContain("amber");
+  });
+
+  it("treats a nonzero history offset as an established conversation", async () => {
+    const prepared = await makeRoutedService().prepare(
+      { messages: [{ role: "user", content: "hi again" }] },
+      { ...fullCtx, characterId: routedPersona.characterId, historyOffset: 8 },
+    );
+
+    expect(lastMessage(prepared).content).not.toContain("Start with a little distance.");
+    expect(prepared.promptDebug?.personaProvenance?.sources).toContainEqual(
+      expect.objectContaining({
+        id: "first-contact",
+        reason: "start_only_after_first_turn",
+      }),
+    );
+  });
+});
+
 describe("ChatService.prepare retrieval", () => {
   it("recalls a seeded memory into the per-turn context block", async () => {
     // Seed a memory BEFORE prepare. Its embedding uses the same deterministic
@@ -235,6 +411,90 @@ describe("ChatService.prepare retrieval", () => {
     // The query embedded was the last user text of the request.
     expect(provider.embedCalls).toContainEqual(["My cat is named Nova."]);
   });
+
+  it("reports selected and excluded memory sources without exposing their content", async () => {
+    const memory = new StubMemoryStore();
+    const seedProvider = new FakeProvider();
+    const contents = ["User's cat is named Nova", "User keeps a red umbrella"];
+    const embeddings = await seedProvider.embed(contents);
+    const stored = await memory.upsertMany(
+      { userId: "u1", characterId: "luna" },
+      contents.map((content, index) => ({
+        content,
+        embedding: embeddings[index]!,
+        importance: index === 0 ? 8 : 1,
+        kind: "observation" as const,
+      })),
+    );
+    const service = new ChatService(
+      new FakeProvider(),
+      new StubPersonaStore(),
+      memory,
+      new StubJobQueue(),
+      { ...config, retrieveTopK: 1 },
+    );
+
+    const prepared = await service.prepare(body, fullCtx);
+    const provenance = prepared.promptDebug?.memoryProvenance;
+
+    expect(provenance).toMatchObject({ status: "completed", reason: "retrieval_completed" });
+    expect(provenance?.sources).toHaveLength(2);
+    expect(provenance?.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: stored[0]?.id,
+          retrieval: "selected",
+          retrievalReason: "selected_top_k",
+          injected: true,
+          injectionReason: "retrieved_memories_section",
+        }),
+        expect.objectContaining({
+          id: stored[1]?.id,
+          retrieval: "excluded",
+          retrievalReason: "outside_top_k",
+          injected: false,
+          injectionReason: "not_retrieved",
+        }),
+      ]),
+    );
+    const serialized = JSON.stringify(provenance);
+    expect(serialized).not.toContain("Nova");
+    expect(serialized).not.toContain("umbrella");
+  });
+
+  it("keeps selected-only provenance for a legacy MemoryStore adapter", async () => {
+    const memory = new StubMemoryStore();
+    const content = "User's cat is named Nova";
+    const embedding = (await new FakeProvider().embed([content]))[0];
+    if (!embedding) throw new Error("test embedding missing");
+    const [stored] = await memory.upsertMany(
+      { userId: "u1", characterId: "luna" },
+      [{ content, embedding, importance: 5, kind: "observation" }],
+    );
+    const tracedRetrieve = memory.retrieveWithTrace.bind(memory);
+    Object.defineProperties(memory, {
+      retrieve: {
+        value: async (...args: Parameters<StubMemoryStore["retrieve"]>) =>
+          (await tracedRetrieve(...args)).memories,
+      },
+      retrieveWithTrace: { value: undefined },
+    });
+
+    const { service } = makeService(new FakeProvider(), memory);
+    const provenance = (await service.prepare(body, fullCtx)).promptDebug?.memoryProvenance;
+
+    expect(provenance?.sources).toEqual([
+      expect.objectContaining({
+        id: stored?.id,
+        rank: 1,
+        score: null,
+        rawRelevance: null,
+        retrieval: "selected",
+        retrievalReason: "legacy_store_selected",
+        injected: true,
+      }),
+    ]);
+  });
 });
 
 describe("ChatService.prepare resilience", () => {
@@ -248,6 +508,11 @@ describe("ChatService.prepare resilience", () => {
     // Persona still assembled; no recall section without memories.
     expect(content).toContain("You are Luna.");
     expect(content).not.toContain("# Things you recall");
+    expect(prepared.promptDebug?.memoryProvenance).toEqual({
+      status: "failed",
+      reason: "retrieval_failed",
+      sources: [],
+    });
 
     // The turn still completes end to end.
     await prepared.postTurn("What a great name!");
@@ -444,6 +709,65 @@ describe("ChatService bond", () => {
     const second = await service.prepare(body, { ...fullCtx, turnId: "turn-2" });
 
     expect(second.request.messages[0]?.content).toBe(first.request.messages[0]?.content);
+    expect(second.promptDebug?.stablePromptSha256).toBe(first.promptDebug?.stablePromptSha256);
     expect(lastMessage(second).content).not.toBe(lastMessage(first).content);
+  });
+
+  it("fingerprints the served prompt without exposing persona or memory content", async () => {
+    const { service } = makeService();
+    const prepared = await service.prepare(body, fullCtx);
+
+    expect(prepared.promptDebug).toMatchObject({
+      schemaVersion: 1,
+      personaBlockCount: 5,
+      canonCount: 1,
+      contextSectionNames: ["current_moment", "bond"],
+      retrievedMemoryCount: 0,
+      memoryPolicyVersion: 1,
+      retrievalConfig: {
+        topK: 6,
+        weights: { recency: 1, importance: 1, relevance: 1 },
+        recencyDecay: 0.99,
+      },
+    });
+    expect(prepared.promptDebug?.stablePromptSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared.promptDebug?.stablePromptSha256).toBe(
+      createHash("sha256")
+        .update(String(prepared.request.messages[0]?.content), "utf8")
+        .digest("hex"),
+    );
+    const serialized = JSON.stringify(prepared.promptDebug);
+    expect(serialized).not.toContain("Luna");
+    expect(serialized).not.toContain("observatory");
+    expect(serialized).not.toContain("Nova");
+  });
+
+  it("changes the stable fingerprint when persona or canon content changes", async () => {
+    const base = await new StubPersonaStore().get("luna");
+    if (!base) throw new Error("stub persona missing");
+    const prepare = async (persona: typeof base) => {
+      const service = new ChatService(
+        new FakeProvider(),
+        new StubPersonaStore([persona]),
+        new StubMemoryStore(),
+        new StubJobQueue(),
+        config,
+      );
+      return service.prepare(body, { characterId: persona.characterId });
+    };
+
+    const original = await prepare(base);
+    const personaChanged = await prepare({ ...base, bio: `${base.bio}!` });
+    const canonChanged = await prepare({
+      ...base,
+      canonMemories: [...base.canonMemories, "Keeps a red notebook."],
+    });
+
+    expect(personaChanged.promptDebug?.stablePromptSha256).not.toBe(
+      original.promptDebug?.stablePromptSha256,
+    );
+    expect(canonChanged.promptDebug?.stablePromptSha256).not.toBe(
+      original.promptDebug?.stablePromptSha256,
+    );
   });
 });

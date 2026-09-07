@@ -39,6 +39,7 @@ export class OpenAiStructuredLlm implements StructuredLlm {
   private readonly client: OpenAI;
   private readonly timeoutMs: number;
   private readonly maxAttempts: number;
+  private temperatureSupported = true;
 
   constructor(config: StructuredLlmConfig) {
     this.model = config.model;
@@ -72,7 +73,9 @@ export class OpenAiStructuredLlm implements StructuredLlm {
           {
             model: this.model,
             stream: false,
-            temperature: options.temperature ?? 0,
+            ...(this.temperatureSupported && options.temperature !== undefined
+              ? { temperature: options.temperature }
+              : {}),
             seed: options.seed,
             ...(useJsonMode ? { response_format: { type: "json_object" as const } } : {}),
             messages: [
@@ -101,6 +104,7 @@ export class OpenAiStructuredLlm implements StructuredLlm {
         lastError = parsed.error;
       } catch (error) {
         lastError = error;
+        if (shouldDisableTemperature(error)) this.temperatureSupported = false;
         // Some otherwise OpenAI-compatible local servers reject response_format,
         // and malformed model text can fail JSON.parse. A 429/timeout/server
         // error is unrelated and must not silently change the request contract.
@@ -115,6 +119,16 @@ export class OpenAiStructuredLlm implements StructuredLlm {
       cause: lastError,
     });
   }
+}
+
+function shouldDisableTemperature(error: unknown): boolean {
+  const status = isRecord(error) && typeof error.status === "number" ? error.status : undefined;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    (status === 400 || status === 422) &&
+    /temperature/iu.test(message) &&
+    /unsupported|not support|only .*default/iu.test(message)
+  );
 }
 
 function shouldDisableJsonMode(error: unknown): boolean {

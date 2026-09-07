@@ -42,3 +42,10 @@ schema. The Agent reads the OPOD rows as-is — `characters` +
 set. Blocks are the single source of truth shared with the content pipeline;
 active rows are the serving truth (no publish state). Memory/queue remain on
 stubs until their pgvector adapters land.
+
+## P1 routing addendum (2026-09-07)
+
+`PostgresPersonaStore` remains the raw-content adapter and now also returns each block's stable row ID.
+ADR 0008 adds an optional DDL-free read decorator and a shared prompt router after this boundary. The
+router decides whether a block is stable, turn-scoped, retrieval-gated, or excluded; it does not alter
+the authored content. Without an explicit manifest, the legacy serving behavior is preserved.

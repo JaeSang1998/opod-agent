@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 import { useId } from "react";
 import type { CharacterOption } from "./character-option";
 
-export const REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+const REASONING_EFFORTS = ["none", "low", "medium", "high"] as const;
+type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export interface ChatSettings {
   characterId: string;

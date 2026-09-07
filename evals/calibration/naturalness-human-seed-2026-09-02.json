@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "kind": "naturalness-human-calibration",
+  "status": "seed",
+  "source": {
+    "label": "p0-temperature-fallback-smoke-2026-09-02",
+    "suiteReportSha256": "004d49d59fb1c6f4d52f217eb39c0d8c5859af65ff6a158e48c000f83fab8759",
+    "reviewedOn": "2026-09-02"
+  },
+  "review": {
+    "reviewerCount": 1,
+    "blind": false,
+    "method": "posthoc"
+  },
+  "trajectoryVerdicts": [
+    {
+      "transcriptId": "bare-opening-mutuality-r1-070499a3",
+      "scenarioId": "bare-opening-mutuality",
+      "automaticVerdict": "pass",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-001", "human-002"]
+    },
+    {
+      "transcriptId": "bare-opening-mutuality-r1-8400c9bd",
+      "scenarioId": "bare-opening-mutuality",
+      "automaticVerdict": "fail",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-003", "human-004", "human-005"]
+    },
+    {
+      "transcriptId": "bare-opening-mutuality-r1-44371edc",
+      "scenarioId": "bare-opening-mutuality",
+      "automaticVerdict": "pass",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-006", "human-007", "human-008", "human-009"]
+    },
+    {
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "scenarioId": "bare-opening-mutuality",
+      "automaticVerdict": "pass",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": [
+        "human-010",
+        "human-011",
+        "human-012",
+        "human-013",
+        "human-014",
+        "human-015",
+        "human-016"
+      ]
+    },
+    {
+      "transcriptId": "everyday-world-state-restraint-r1-dcc67045",
+      "scenarioId": "everyday-world-state-restraint",
+      "automaticVerdict": "fail",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-017", "human-018"]
+    },
+    {
+      "transcriptId": "everyday-world-state-restraint-r1-5a355b5e",
+      "scenarioId": "everyday-world-state-restraint",
+      "automaticVerdict": "fail",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-019"]
+    },
+    {
+      "transcriptId": "everyday-world-state-restraint-r1-536c3c20",
+      "scenarioId": "everyday-world-state-restraint",
+      "automaticVerdict": "fail",
+      "humanVerdict": "not-reviewed",
+      "effectiveVerdict": "fail",
+      "evidenceIds": []
+    },
+    {
+      "transcriptId": "everyday-world-state-restraint-r1-67a8903e",
+      "scenarioId": "everyday-world-state-restraint",
+      "automaticVerdict": "fail",
+      "humanVerdict": "fail",
+      "effectiveVerdict": "fail",
+      "evidenceIds": ["human-020", "human-021", "human-022"]
+    }
+  ],
+  "annotations": [
+    {
+      "id": "human-001",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-070499a3",
+      "turn": 1,
+      "excerpt": "😊 오늘 날씨 좀 선선해진 것 같더라고요",
+      "tags": ["local_relevance"],
+      "note": "짧은 인사 직후 연결 없이 날씨 화제로 비약한다."
+    },
+    {
+      "id": "human-002",
+      "kind": "verdict",
+      "assessment": "verdict-override",
+      "transcriptId": "bare-opening-mutuality-r1-070499a3",
+      "excerpt": "PASS",
+      "tags": ["calibration_mismatch"],
+      "note": "자동 PASS를 사람 FAILURE로 override한다."
+    },
+    {
+      "id": "human-003",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-8400c9bd",
+      "turn": 2,
+      "excerpt": "어디 놀러 왔어요?",
+      "tags": ["local_relevance"],
+      "note": "사용자가 놀러 왔다는 전제가 없는 문맥에서 나온 질문이다."
+    },
+    {
+      "id": "human-004",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-8400c9bd",
+      "turn": 5,
+      "excerpt": "그날이 있죠",
+      "tags": ["natural_korean"],
+      "note": "이 문맥에서는 '그런 날이 있죠'가 자연스럽다."
+    },
+    {
+      "id": "human-005",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-8400c9bd",
+      "turn": 3,
+      "excerpt": "제일 뜬금없긴 하죠",
+      "tags": ["local_relevance", "natural_korean"],
+      "note": "무엇이 뜬금없다는지 지시 대상과 문맥이 연결되지 않는다."
+    },
+    {
+      "id": "human-006",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-44371edc",
+      "turn": 1,
+      "excerpt": "오, 왔네요. 반가워요.",
+      "tags": ["natural_korean"],
+      "note": "실제 첫 채팅보다 번역투나 상담형 인사처럼 들린다."
+    },
+    {
+      "id": "human-007",
+      "kind": "verdict",
+      "assessment": "verdict-override",
+      "transcriptId": "bare-opening-mutuality-r1-44371edc",
+      "excerpt": "PASS",
+      "tags": ["calibration_mismatch"],
+      "note": "자동 PASS를 사람 FAILURE로 override한다."
+    },
+    {
+      "id": "human-008",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-44371edc",
+      "turn": 2,
+      "excerpt": "오후인데 시간 잘 비었네요 ㅋㅋ 저도 오늘 마지막 수업 좀 남았는데 잠깐 놀아요.",
+      "tags": ["local_relevance", "natural_korean"],
+      "note": "사용자 상황을 임의로 추정하고 문장 구성도 부자연스럽다."
+    },
+    {
+      "id": "human-009",
+      "kind": "trajectory",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-44371edc",
+      "excerpt": "마지막 수업→인터벌→회원→약점 세션",
+      "tags": ["mutuality", "persona_without_motif"],
+      "note": "직업 설정을 너무 빠르게 설명하고 잡담보다 상담 응대처럼 흐른다."
+    },
+    {
+      "id": "human-010",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 1,
+      "excerpt": "뭐 보고 오셨어요?",
+      "tags": ["local_relevance"],
+      "note": "사용자가 무엇을 보고 왔다는 근거가 없는 질문이다."
+    },
+    {
+      "id": "human-011",
+      "kind": "verdict",
+      "assessment": "verdict-override",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "excerpt": "PASS",
+      "tags": ["calibration_mismatch"],
+      "note": "자동 PASS를 사람 FAILURE로 override한다."
+    },
+    {
+      "id": "human-012",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 2,
+      "excerpt": "저 방금 촬영 끝나고 왔는데",
+      "tags": ["local_relevance", "world_state_restraint"],
+      "note": "사용자 발화와 무관한 촬영 상태를 삽입한다."
+    },
+    {
+      "id": "human-013",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 2,
+      "excerpt": "아직 머리에 콘셉트가 남아있어요.",
+      "tags": ["local_relevance", "natural_korean"],
+      "note": "한국어 표현이 어색하고 앞 문맥에도 맞지 않는다."
+    },
+    {
+      "id": "human-014",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 3,
+      "excerpt": "딥 버건디 니트 미디 원피스 찍었어요. 가을 느낌이 딱이었죠.",
+      "tags": ["persona_without_motif", "source_restraint"],
+      "note": "대화보다 상품 설명처럼 들리고 게시물 소재에 지나치게 의존한다."
+    },
+    {
+      "id": "human-015",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 5,
+      "excerpt": "국룰 맞아요. 원본 백업도 두 번이나 했는데 셀렉은 아직 시작도 안 했어요. 내일로 미루면 괜찮아지겠죠 뭐.",
+      "tags": ["persona_without_motif"],
+      "note": "이 캐릭터가 실제로 할 법한 반응으로 느껴지지 않는다."
+    },
+    {
+      "id": "human-016",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "bare-opening-mutuality-r1-2a4ece3c",
+      "turn": 6,
+      "excerpt": "맞아요. 백업은 의무감으로 하는 거고 셀렉은 진짜 눈이 아픈 작업이라 ㅋㅋ 그래도 오늘 중으로 한 장이라도 골라야 내일 보정팀한테 넘기는데요.",
+      "tags": ["persona_without_motif"],
+      "note": "고유 반응보다 직업 설정을 전달하기 위한 문장처럼 들린다."
+    },
+    {
+      "id": "human-017",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "everyday-world-state-restraint-r1-dcc67045",
+      "turn": 1,
+      "excerpt": "작업실 책상에 이것저것 늘어놓고 있어요 🎞️",
+      "tags": ["natural_korean"],
+      "note": "구어체 문장 구사가 어색하다."
+    },
+    {
+      "id": "human-018",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "everyday-world-state-restraint-r1-dcc67045",
+      "turn": 2,
+      "excerpt": "필름 박스랑 기차표 이런 거 정리하는 게 생각보다 시간이 잘 가요.",
+      "tags": ["persona_without_motif", "source_restraint"],
+      "note": "게시물을 설명하는 말투이며 Persona 연출이 과하다."
+    },
+    {
+      "id": "human-019",
+      "kind": "trajectory",
+      "assessment": "failure",
+      "transcriptId": "everyday-world-state-restraint-r1-5a355b5e",
+      "excerpt": "촬영 중심 대화",
+      "tags": ["persona_without_motif", "topic_diversity"],
+      "note": "촬영이라는 대표 소재가 대화를 독점하지 않도록 평가해야 한다."
+    },
+    {
+      "id": "human-020",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "everyday-world-state-restraint-r1-67a8903e",
+      "turn": 1,
+      "excerpt": "셀렉 보고 있어요.",
+      "tags": ["natural_korean"],
+      "note": "업계 용어라는 이유만으로 일상 채팅에서 자연스러운 표현이 되지는 않는다."
+    },
+    {
+      "id": "human-021",
+      "kind": "turn",
+      "assessment": "failure",
+      "transcriptId": "everyday-world-state-restraint-r1-67a8903e",
+      "turn": 2,
+      "excerpt": "아까보다는 한 발 빠져서 보고 있어서 덜 답답하긴 한데 아직 꽤 남았어요.",
+      "tags": ["natural_korean"],
+      "note": "의미가 불명확하고 연결어가 부자연스럽다."
+    },
+    {
+      "id": "human-022",
+      "kind": "turn",
+      "assessment": "boundary",
+      "transcriptId": "everyday-world-state-restraint-r1-67a8903e",
+      "turn": 2,
+      "excerpt": "응, 아직이요",
+      "tags": ["register_fit"],
+      "note": "반말·존댓말 혼용 자체는 실패가 아니며 Persona와 관계 단계에 따라 평가한다."
+    }
+  ],
+  "pairwiseReviews": []
+}

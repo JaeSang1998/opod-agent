@@ -1,6 +1,7 @@
 import type { ArchivalMemory, CoreMemory, Summary } from "../memory/types.js";
 import { type BondRecency, type BondSnapshot, MAX_BOND_LEVEL } from "../memory/bond.js";
 import { formatBondSignal } from "./bond-signal.js";
+import type { PersonaBlock } from "../persona/persona.js";
 
 /**
  * The half of the prompt that is different every turn — and therefore the half
@@ -31,6 +32,10 @@ export interface TurnContextInputs {
   core: CoreMemory | null;
   summary: Summary | null;
   memories: ArchivalMemory[];
+  /** Authored material that is valid only on the first assistant reply. */
+  personaStartBlocks?: readonly PersonaBlock[];
+  /** Character background selected as relevant to this user turn. */
+  personaRetrievedBlocks?: readonly PersonaBlock[];
   /** Wall-clock instant to ground the character's sense of time. */
   now?: Date;
   /** IANA timezone of the user, when known; invalid/absent falls back to UTC. */
@@ -44,7 +49,16 @@ export interface TurnContextInputs {
  * eventually answer the note instead of the person.
  */
 export function assembleTurnContext(inputs: TurnContextInputs): string | null {
-  const { bond, core, summary, memories, now, timezone } = inputs;
+  const {
+    bond,
+    core,
+    summary,
+    memories,
+    personaStartBlocks = [],
+    personaRetrievedBlocks = [],
+    now,
+    timezone,
+  } = inputs;
   const sections: string[] = [];
 
   if (now) sections.push(currentMomentSection(now, timezone));
@@ -54,6 +68,16 @@ export function assembleTurnContext(inputs: TurnContextInputs): string | null {
   // stranger who gets greeted with "그 면접 어떻게 됐어요?" is unsettling, not
   // warm.
   if (bond) sections.push(bondSection(bond));
+
+  if (personaStartBlocks.length > 0) {
+    sections.push(personaBlocksSection("First-contact character guidance", personaStartBlocks));
+  }
+
+  if (personaRetrievedBlocks.length > 0) {
+    sections.push(
+      personaBlocksSection("Character background relevant to this message", personaRetrievedBlocks),
+    );
+  }
 
   if (core?.content) {
     sections.push(`# What you know about this person\n${core.content}`);
@@ -79,6 +103,13 @@ export function assembleTurnContext(inputs: TurnContextInputs): string | null {
     ...sections,
     "</context>",
   ].join("\n\n");
+}
+
+function personaBlocksSection(heading: string, blocks: readonly PersonaBlock[]): string {
+  return [
+    `# ${heading}`,
+    ...blocks.flatMap((block) => [`## ${block.title}`, block.content]),
+  ].join("\n");
 }
 
 /**

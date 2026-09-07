@@ -27,6 +27,17 @@ export interface RankOptions {
   topK: number;
 }
 
+export interface ScoredRetrievalCandidate<T> {
+  item: T;
+  /** One-based position after applying the current weighted ranking. */
+  rank: number;
+  score: number;
+  /** Cosine similarity before min-max normalization. */
+  rawRelevance: number;
+  decision: "selected" | "excluded";
+  reason: "selected_top_k" | "outside_top_k";
+}
+
 /** Min-max normalize to [0,1]; a zero range maps everything to 0.5 (as GA does). */
 function normalize(values: number[]): number[] {
   if (values.length === 0) return [];
@@ -42,6 +53,21 @@ export function rankByRetrievalScore<T extends Scorable>(
   queryEmbedding: number[],
   opts: RankOptions,
 ): T[] {
+  return scoreRetrievalCandidates(items, queryEmbedding, opts)
+    .filter((candidate) => candidate.decision === "selected")
+    .map((candidate) => candidate.item);
+}
+
+/**
+ * The same ranking used for retrieval, retaining content-free evidence for
+ * candidates that fell outside top-K. Keeping this at the ranking owner avoids
+ * a debug-only scoring implementation drifting from the actual selection.
+ */
+export function scoreRetrievalCandidates<T extends Scorable>(
+  items: T[],
+  queryEmbedding: number[],
+  opts: RankOptions,
+): ScoredRetrievalCandidate<T>[] {
   if (items.length === 0) return [];
 
   const relevance = items.map((it) => cosineSimilarity(queryEmbedding, it.embedding ?? []));
@@ -64,12 +90,23 @@ export function rankByRetrievalScore<T extends Scorable>(
   return items
     .map((it, i) => ({
       it,
+      originalIndex: i,
+      rawRelevance: relevance[i] ?? 0,
       score:
         w.recency * (nRec[i] ?? 0) +
         w.importance * (nImp[i] ?? 0) +
         w.relevance * (nRel[i] ?? 0),
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, opts.topK)
-    .map((x) => x.it);
+    .sort((a, b) => b.score - a.score || a.originalIndex - b.originalIndex)
+    .map(({ it, score, rawRelevance }, index) => {
+      const selected = index < opts.topK;
+      return {
+        item: it,
+        rank: index + 1,
+        score,
+        rawRelevance,
+        decision: selected ? "selected" : "excluded",
+        reason: selected ? "selected_top_k" : "outside_top_k",
+      };
+    });
 }

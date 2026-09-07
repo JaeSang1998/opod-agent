@@ -1,0 +1,217 @@
+{
+  "schemaVersion": 1,
+  "mode": "structure",
+  "standard": {
+    "minimumPassRate": 0,
+    "minimumMeanScore": 0,
+    "minimumP10Score": 0,
+    "maximumScenarioScoreRange": 1
+  },
+  "scenarios": [
+    {
+      "schemaVersion": 1,
+      "id": "shared-memory-provenance",
+      "title": "공용 메모리 회수·주입 provenance",
+      "description": "특정 캐릭터의 말투나 설정이 아니라 공용 메모리 배관이 실제 fixture를 회수하고 선택·제외·주입 근거를 남기는지 확인한다.",
+      "language": "ko",
+      "estimatedMinutes": 1,
+      "targetTurns": 12,
+      "historyWindowMessages": 4,
+      "user": {
+        "identity": "공용 메모리 구조 검증을 위한 합성 사용자",
+        "backstory": "거주지를 부산에서 서울로 정정했고 이전 상세 주소는 잊어 달라고 요청했다.",
+        "textingStyle": "짧고 일상적인 한국어",
+        "goals": [
+          "현재 사실이 검색 후보와 실제 주입 기록에 나타나는지 확인한다"
+        ],
+        "constraints": [
+          "캐릭터 고유 설정이나 말버릇을 유도하지 않는다"
+        ]
+      },
+      "phases": [
+        {
+          "fromTurn": 1,
+          "toTurn": 12,
+          "name": "structural-probe",
+          "simulatorInstruction": "메모리 구조 확인에 필요한 짧은 일상 대화를 이어 간다."
+        }
+      ],
+      "scriptedTurns": [
+        {
+          "turn": 1,
+          "message": "내가 지금 서울 성수동에 산다고 했던 거 기억나?",
+          "purpose": "현재 거주 사실을 회수하는 고정 probe"
+        },
+        {
+          "turn": 2,
+          "message": "응, 주소 얘기는 여기까지만 하자.",
+          "purpose": "민감한 상세 주소 확장을 막는다"
+        },
+        {
+          "turn": 3,
+          "message": "오늘은 그냥 가볍게 얘기하고 싶어.",
+          "purpose": "일상 대화로 전환한다"
+        },
+        {
+          "turn": 4,
+          "message": "보리차 한 잔 마시는 중이야.",
+          "purpose": "별도 현재 취향을 언급한다"
+        },
+        {
+          "turn": 5,
+          "message": "고양이는 옆에서 자고 있고.",
+          "purpose": "다른 저장 사실과 자연스럽게 접촉한다"
+        },
+        {
+          "turn": 6,
+          "message": "오늘 일은 생각보다 일찍 끝났어.",
+          "purpose": "직업 세부 설명 없이 근황을 말한다"
+        },
+        {
+          "turn": 7,
+          "message": "저녁엔 산책이나 할까 봐.",
+          "purpose": "낮은 강도의 새 주제로 이동한다"
+        },
+        {
+          "turn": 8,
+          "message": "날씨만 괜찮으면 좋겠다.",
+          "purpose": "바로 앞 맥락을 잇는다"
+        },
+        {
+          "turn": 9,
+          "message": "너라면 음악 들으면서 걸을 것 같아?",
+          "purpose": "상호적인 의견을 묻는다"
+        },
+        {
+          "turn": 10,
+          "message": "난 조용히 걷는 쪽이 더 좋더라.",
+          "purpose": "사용자 취향을 짧게 밝힌다"
+        },
+        {
+          "turn": 11,
+          "message": "슬슬 나갈 준비해야겠다.",
+          "purpose": "대화를 닫기 시작한다"
+        },
+        {
+          "turn": 12,
+          "message": "다녀와서 또 얘기할게.",
+          "purpose": "가볍게 종료한다"
+        }
+      ],
+      "memoryFixture": {
+        "schemaVersion": 1,
+        "seedPolicy": "baseline_unfiltered",
+        "asOf": "2026-09-07T12:00:00.000+09:00",
+        "records": [
+          {
+            "id": "current-residence",
+            "content": "사용자는 현재 서울 성수동에 산다.",
+            "kind": "observation",
+            "importance": 10,
+            "lifecycle": "active"
+          },
+          {
+            "id": "old-residence",
+            "content": "과거에는 사용자가 부산 해운대에 산다고 기록했지만 이후 거주지를 정정했다.",
+            "kind": "observation",
+            "importance": 9,
+            "lifecycle": "superseded",
+            "supersededBy": "current-residence"
+          },
+          {
+            "id": "forgotten-address",
+            "content": "사용자의 예전 상세 주소는 부산 해운대구의 합성 주소였다.",
+            "kind": "observation",
+            "importance": 8,
+            "lifecycle": "forgotten"
+          },
+          {
+            "id": "stale-commute",
+            "content": "오래전 사용자는 부산 지하철로 출근하곤 했다.",
+            "kind": "observation",
+            "importance": 7,
+            "lifecycle": "stale"
+          },
+          {
+            "id": "active-drink",
+            "content": "사용자는 따뜻한 보리차를 편하게 마신다.",
+            "kind": "observation",
+            "importance": 4,
+            "lifecycle": "active"
+          },
+          {
+            "id": "active-pet",
+            "content": "사용자는 마루라는 고양이와 산다.",
+            "kind": "observation",
+            "importance": 4,
+            "lifecycle": "active"
+          },
+          {
+            "id": "active-work",
+            "content": "사용자는 제품 디자인 일을 한다.",
+            "kind": "observation",
+            "importance": 3,
+            "lifecycle": "active"
+          },
+          {
+            "id": "privacy-reflection",
+            "content": "사용자는 사생활 관련 기억을 필요 이상으로 꺼내는 대화를 불편해한다.",
+            "kind": "reflection",
+            "importance": 5,
+            "lifecycle": "active"
+          }
+        ],
+        "currentStateRecords": [
+          {
+            "id": "active-availability",
+            "key": "availability",
+            "value": "오늘 18시까지 바쁨",
+            "status": "active",
+            "validFrom": "2026-09-07T09:00:00.000+09:00",
+            "validUntil": "2026-09-07T18:00:00.000+09:00"
+          },
+          {
+            "id": "expired-availability",
+            "key": "availability",
+            "value": "어제 18시까지 바빴음",
+            "status": "expired",
+            "validFrom": "2026-09-06T09:00:00.000+09:00",
+            "validUntil": "2026-09-06T18:00:00.000+09:00"
+          }
+        ],
+        "probes": [
+          {
+            "turn": 1,
+            "description": "현재 거주지는 주입하고 과거·삭제·오래된 상태는 제외해야 한다.",
+            "expectedInjectedAny": [
+              "current-residence"
+            ],
+            "expectedExcluded": [
+              "old-residence",
+              "forgotten-address",
+              "stale-commute"
+            ]
+          }
+        ]
+      },
+      "judgeCriteria": [
+        {
+          "id": "memory_structure_only",
+          "description": "이 시나리오는 자연스러움 점수가 아니라 별도 memory fixture preflight 결과로 공용 배관을 판정한다.",
+          "weight": 1,
+          "minimum": 1
+        }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 500,
+        "maxOverlongRatio": 1,
+        "maxQuestionTurnRatio": 1,
+        "maxConsecutiveQuestionTurns": 12,
+        "maxNearDuplicatePairs": 12,
+        "minTranscriptChars": 1,
+        "forbiddenPatterns": []
+      },
+      "passThreshold": 0
+    }
+  ]
+}

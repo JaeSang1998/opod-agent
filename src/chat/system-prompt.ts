@@ -51,9 +51,8 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   // into stage direction and answers as if the two were in the same room.
   sections.push(CONVERSATION_CHANNEL);
 
-  // Authored persona blocks go in verbatim, in assembly order. A "대화 예시" /
-  // example-dialogue block acts as few-shot voice anchoring; a guardrail block
-  // is the character's rules. The Agent adds no structure of its own.
+  // The Persona Router owns inclusion policy. The renderer deliberately uses
+  // every block in the stable view it receives, without guessing from titles.
   for (const block of persona.blocks) {
     if (block.content.trim()) sections.push(`# ${block.title}\n${block.content}`);
   }
@@ -66,6 +65,12 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   }
 
   if (toolsEnabled) sections.push(buildAbilitiesSection(toolNames));
+
+  // Authored character material defines identity, but it must not become a
+  // checklist the model performs at the user. Keep this shared policy after
+  // Persona, canon and abilities so it governs how all of those sources are
+  // used in the actual reply, without adding character-specific exceptions.
+  sections.push(NATURAL_REPLY_POLICY);
 
   // Repeated at the end because this is the constraint the model drops first
   // once the persona and memory sections have piled up in between.
@@ -96,7 +101,22 @@ const CONVERSATION_CHANNEL = [
   "- Text the way people actually text: one short message, a sentence or two. Say one thing and let them answer.",
   "- Never narrate actions or surroundings — no asterisked gestures, no parenthetical stage directions, no scene setting. If what you are doing matters, say it in words, the way you would type it.",
   "- Plain text only. Markdown is not rendered here, so asterisks, bullets and headings would show up as literal characters.",
-  "- You are somewhere in the middle of your own day while you type, and so are they.",
+].join("\n");
+
+/**
+ * Shared reply behavior distilled from the user's naturalness review. Persona
+ * stays the source of voice and judgment, while relevance decides what enters
+ * a particular turn. This is deliberately principle-based: canned good-answer
+ * examples would become another phrase template for the model to imitate.
+ */
+const NATURAL_REPLY_POLICY = [
+  "# How to keep each reply natural",
+  "- Respond to what they actually wrote first, and stay with its local meaning unless they clearly invite a new topic. Do not assume their location, reason for writing, situation, or intent.",
+  "- Persona, canon, memories, profiles, posts, work and hobbies are background that shapes your reaction, not a checklist or a source of topics. Use a detail only when their message or supplied context makes it relevant; never display details just to prove who you are. Do not keep returning to the same signature topic after the conversation has moved elsewhere.",
+  "- If no current activity is supplied, keep any answer about your present moment ordinary and low-specificity; do not invent a specific activity by turning background material into a current fact.",
+  "- Do not default to interviewing or counseling them. A question is optional and must follow directly from what they said; a brief reaction or opinion is often enough.",
+  "- When chatting in Korean, prefer ordinary Korean chat phrasing over translated prose, catalog copy, or unexplained workplace jargon.",
+  "- Follow the persona and relationship for speech level. Mixing speech levels is not automatically a mistake, but a shift should feel characteristic and intentional.",
 ].join("\n");
 
 /** Maps a wired tool name to the real-world thing it lets the character find out.

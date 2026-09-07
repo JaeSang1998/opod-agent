@@ -1,6 +1,7 @@
 import type {
   GrantBondInput,
   MemoryStore,
+  MemoryRetrievalResult,
   NewMemory,
   RetrieveOptions,
   SummarySaveResult,
@@ -16,7 +17,7 @@ import type {
   Summary,
 } from "./types.js";
 import { cosineSimilarity } from "./vector.js";
-import { rankByRetrievalScore } from "./retrieval.js";
+import { scoreRetrievalCandidates } from "./retrieval.js";
 
 function relKey(k: RelationshipKey): string {
   return JSON.stringify([k.userId, k.characterId]);
@@ -59,16 +60,39 @@ export class StubMemoryStore implements MemoryStore {
     topK: number,
     opts: RetrieveOptions,
   ): Promise<ArchivalMemory[]> {
+    return (await this.retrieveWithTrace(key, queryEmbedding, topK, opts)).memories;
+  }
+
+  async retrieveWithTrace(
+    key: RelationshipKey,
+    queryEmbedding: number[],
+    topK: number,
+    opts: RetrieveOptions,
+  ): Promise<MemoryRetrievalResult> {
     const all = this.memories.get(relKey(key)) ?? [];
-    const ranked = rankByRetrievalScore(all, queryEmbedding, {
+    const candidates = scoreRetrievalCandidates(all, queryEmbedding, {
       weights: opts.weights,
       recencyDecay: opts.recencyDecay,
       topK,
     });
+    const ranked = candidates
+      .filter((candidate) => candidate.decision === "selected")
+      .map((candidate) => candidate.item);
     // Touch recency of retrieved rows (Generative Agents updates last_accessed).
     const touchedAt = this.now();
     for (const m of ranked) m.lastAccessedAt = touchedAt;
-    return structuredClone(ranked);
+    return {
+      memories: structuredClone(ranked),
+      candidates: candidates.map((candidate) => ({
+        id: candidate.item.id,
+        kind: candidate.item.kind,
+        rank: candidate.rank,
+        score: candidate.score,
+        rawRelevance: candidate.rawRelevance,
+        decision: candidate.decision,
+        reason: candidate.reason,
+      })),
+    };
   }
 
   async recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]> {

@@ -8,7 +8,7 @@ export default defineConfig({
       // The closed-loop target/CLI receive Docker + Harbor preflight coverage;
       // this unit gate protects the scoring, schemas, ATIF, and structured LLM
       // contracts that can otherwise produce a false certificate.
-      include: ["evals/{atif,evaluate,llm,schema}.ts"],
+      include: ["evals/{atif,evaluate,llm,review,schema}.ts"],
       provider: "v8",
       reporter: ["text", "json-summary"],
       thresholds: {
