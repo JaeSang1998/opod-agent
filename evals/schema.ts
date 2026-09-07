@@ -368,6 +368,7 @@ const BlindReviewPairwiseWinnerSchema = z.enum([
   "left",
   "right",
   "tie",
+  "both_bad",
   "abstain",
   "not-reviewed",
 ]);
@@ -456,7 +457,7 @@ export const NaturalnessBlindReviewSubmissionSchema = z
           message: "complete blind reviews cannot contain unreviewed pairs",
         });
       }
-      if (review.winner === "abstain" && !review.note.trim()) {
+      if ((review.winner === "abstain" || review.winner === "both_bad") && !review.note.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["pairwiseReviews", index, "note"],
@@ -469,7 +470,7 @@ export const NaturalnessBlindReviewSubmissionSchema = z
 const BlindReviewKeyItemSchema = z.object({
   itemId: z.string().regex(/^item-\d{3}$/),
   transcriptId: z.string().min(1),
-  automaticVerdict: CalibrationVerdictSchema,
+  automaticVerdict: z.union([CalibrationVerdictSchema, z.literal("not-judged")]),
   validTurns: z.array(PositiveTurn).min(1),
 });
 

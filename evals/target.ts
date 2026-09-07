@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 import { createApp } from "../src/http/app.js";
-import { buildContainer, type Container } from "../src/bootstrap/container.js";
+import { buildContainer, type Container, type ContainerOverrides } from "../src/bootstrap/container.js";
 import { loadEnv } from "../src/bootstrap/env.js";
 import { OpenAICompatProvider } from "../src/provider/openai-compat-provider.js";
 import { StubJobQueue } from "../src/memory/stub-job-queue.js";
@@ -43,6 +43,7 @@ export interface TargetTurnOutput {
   toolEvents: ToolLoopEvent[];
   responseId?: string;
   responseModel?: string;
+  finishReason?: string;
   promptDebug?: PromptDebugMetadata;
 }
 
@@ -76,6 +77,11 @@ export interface ConversationTarget {
 
 type ConsolidationMode = "quiescent" | "batched" | "none";
 
+/** Local-only inputs. Remote targets cannot prove these overrides were applied. */
+type InProcessTargetOptions = Pick<ContainerOverrides, "provider" | "personas" | "clock" | "personaBlockSelector"> & {
+  personalization?: "none";
+};
+
 class InProcessTarget implements ConversationTarget {
   readonly kind = "in-process" as const;
   readonly model: string;
@@ -88,7 +94,7 @@ class InProcessTarget implements ConversationTarget {
   private readonly batchTurns: number;
   private queueCursor = 0;
 
-  constructor(env: NodeJS.ProcessEnv) {
+  constructor(env: NodeJS.ProcessEnv, private readonly options: InProcessTargetOptions = {}) {
     const loaded = loadEnv({
       ...env,
       DATABASE_URL: undefined,
@@ -99,7 +105,7 @@ class InProcessTarget implements ConversationTarget {
       LOG_LEVEL: env.EVAL_LOG_LEVEL ?? "warn",
     });
     const providerMode = evalTargetProviderMode(env.EVAL_TARGET_PROVIDER);
-    const provider = providerMode === "deterministic"
+    const provider = options.provider ?? (providerMode === "deterministic"
       ? new FakeProvider("구조 검증용 합성 응답입니다.")
       : new OpenAICompatProvider({
           baseUrl: loaded.LLM_BASE_URL,
@@ -108,10 +114,11 @@ class InProcessTarget implements ConversationTarget {
           embeddingModel: loaded.EMBEDDING_MODEL,
           embeddingBaseUrl: loaded.EMBEDDING_BASE_URL,
           embeddingApiKey: loaded.EMBEDDING_API_KEY,
-        });
+          maxRetries: env.EVAL_TARGET_MAX_RETRIES === undefined ? undefined : nonNegativeInteger(env.EVAL_TARGET_MAX_RETRIES, 0),
+        }));
     // Supplying the raw provider deliberately bypasses the deployment LLM-log
     // decorator: a self-contained eval must work without DATABASE_URL.
-    this.container = buildContainer(loaded, { provider });
+    this.container = buildContainer(loaded, { ...options, provider });
     if (!(this.container.queue instanceof StubJobQueue)) {
       throw new Error("in-process evaluation requires StubJobQueue");
     }
@@ -125,7 +132,11 @@ class InProcessTarget implements ConversationTarget {
       consolidationMode: this.consolidationMode,
       consolidationBatchTurns: this.batchTurns,
       toolsEnabled: loaded.TOOLS_ENABLED,
-      providerMode,
+      providerMode: options.provider ? "override" : providerMode,
+      providerOrigin: providerMode === "configured" && !options.provider ? new URL(loaded.LLM_BASE_URL).origin : null,
+      personalization: options.personalization ?? "tracked",
+      clock: options.clock ? options.clock().toISOString() : "wall-clock",
+      maxRetries: env.EVAL_TARGET_MAX_RETRIES === undefined ? "sdk-default" : nonNegativeInteger(env.EVAL_TARGET_MAX_RETRIES, 0),
     };
   }
 
@@ -176,10 +187,13 @@ class InProcessTarget implements ConversationTarget {
   }
 
   async reply(input: TargetTurnInput): Promise<TargetTurnOutput> {
+    if (this.options.personas && !await this.options.personas.get(input.identity.characterId)) {
+      throw new Error("character is missing from the frozen Persona input");
+    }
     const started = performance.now();
     const response = await this.app.request("/v1/chat/completions", {
       method: "POST",
-      headers: requestHeaders(input),
+      headers: requestHeaders(input, this.options.personalization !== "none"),
       body: JSON.stringify(requestBody(this.model, input.messages, this.requestConfig)),
     });
     const payload: unknown = await response.json().catch(() => null);
@@ -279,22 +293,28 @@ class HttpTarget implements ConversationTarget {
   async close(): Promise<void> {}
 }
 
-export function createConversationTarget(env: NodeJS.ProcessEnv = process.env): ConversationTarget {
+export function createConversationTarget(
+  env: NodeJS.ProcessEnv = process.env,
+  options: InProcessTargetOptions = {},
+): ConversationTarget {
   const targetUrl = env.EVAL_TARGET_URL;
   if (targetUrl) {
+    if (Object.keys(options).length > 0) throw new Error("fixed evaluation inputs require an in-process target");
     const model = env.EVAL_TARGET_MODEL ?? env.LLM_MODEL;
     if (!model) throw new Error("EVAL_TARGET_MODEL or LLM_MODEL is required for an HTTP target");
     return new HttpTarget(targetUrl, model, env);
   }
-  return new InProcessTarget(env);
+  return new InProcessTarget(env, options);
 }
 
-function requestHeaders(input: TargetTurnInput): Record<string, string> {
+function requestHeaders(input: TargetTurnInput, personalized = true): Record<string, string> {
   return {
     "content-type": "application/json",
     "x-opod-character-id": input.identity.characterId,
-    "x-opod-user-id": input.identity.userId,
-    "x-opod-session-id": input.identity.sessionId,
+    ...(personalized ? {
+      "x-opod-user-id": input.identity.userId,
+      "x-opod-session-id": input.identity.sessionId,
+    } : {}),
     "x-opod-turn-id": `${input.runId}:turn-${input.userTurn}`,
     "x-opod-history-offset": String(input.historyOffset),
     "x-opod-timezone": input.identity.timezone,
@@ -354,6 +374,7 @@ export function parseChatResponse(payload: unknown): Omit<TargetTurnOutput, "lat
     text,
     responseId: typeof payload.id === "string" ? payload.id : undefined,
     responseModel: typeof payload.model === "string" ? payload.model : undefined,
+    finishReason: typeof first?.finish_reason === "string" ? first.finish_reason : undefined,
     usage: {
       promptTokens: numeric(usage.prompt_tokens),
       completionTokens: numeric(usage.completion_tokens),

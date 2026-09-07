@@ -14,6 +14,8 @@ export interface ProviderConfig {
    */
   embeddingBaseUrl?: string;
   embeddingApiKey?: string;
+  /** Leave unset for SDK defaults; bounded evaluations disable automatic retries. */
+  maxRetries?: number;
 }
 
 /**
@@ -34,12 +36,14 @@ export class OpenAICompatProvider implements LLMProvider {
       baseURL: config.baseUrl,
       // Ollama/MLX ignore the key but the SDK requires a non-empty string.
       apiKey: config.apiKey || "not-needed",
+      maxRetries: config.maxRetries,
     });
     // Reuse the chat client unless embeddings are pointed at a separate endpoint.
     this.embedClient = config.embeddingBaseUrl
       ? new OpenAI({
           baseURL: config.embeddingBaseUrl,
           apiKey: config.embeddingApiKey || config.apiKey || "not-needed",
+          maxRetries: config.maxRetries,
         })
       : this.client;
   }

@@ -53,6 +53,8 @@ export interface ContainerOverrides {
   log?: Logger;
   /** Optional P1 routing relevance owner; absent keeps retrievable lore closed. */
   personaBlockSelector?: PersonaBlockSelector;
+  /** Fixed clocks are supplied by isolated evaluations; production uses wall time. */
+  clock?: () => Date;
 }
 
 /**
@@ -159,7 +161,7 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     },
     log,
     tools,
-    undefined,
+    overrides.clock,
     overrides.personaBlockSelector,
   );
 

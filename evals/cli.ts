@@ -1,8 +1,7 @@
-import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { toAtif, toHarborReward } from "./atif.js";
 import {
   aggregateSuite,
@@ -26,7 +25,7 @@ import {
 } from "./schema.js";
 import { createConversationTarget } from "./target.js";
 
-const execFile = promisify(execFileCallback);
+import { collectGitProvenance } from "./git-provenance.js";
 
 type ProfileName = "smoke" | "standard" | "confidence";
 
@@ -423,65 +422,6 @@ async function createNewOutputDirectory(path: string): Promise<void> {
 function requiredPath(raw: string | undefined, option: string): string {
   if (!raw?.trim()) throw new Error(`${option} is required`);
   return resolve(raw);
-}
-
-interface GitProvenance {
-  gitSha?: string;
-  gitDirty?: boolean;
-  dirtyPathHashes?: Record<string, string>;
-}
-
-async function collectGitProvenance(): Promise<GitProvenance> {
-  const configuredSha = process.env.EVAL_GIT_SHA || process.env.GITHUB_SHA;
-  try {
-    const root = (await gitOutput(["rev-parse", "--show-toplevel"])).trim();
-    const head = configuredSha ?? (await gitOutput(["rev-parse", "HEAD"])).trim();
-    const status = await gitOutput(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-    const gitDirty = status.length > 0;
-    const tracked = await gitOutput(["diff", "--name-only", "-z", "HEAD", "--"]);
-    const untracked = await gitOutput(["ls-files", "--others", "--exclude-standard", "-z"]);
-    const paths = [...new Set([...nulFields(tracked), ...nulFields(untracked)])].sort();
-    const dirtyPathHashes: Record<string, string> = {};
-    for (const path of paths) {
-      try {
-        const bytes = await readFile(resolve(root, path));
-        dirtyPathHashes[path] = createHash("sha256").update(bytes).digest("hex");
-      } catch (error) {
-        if (isNodeError(error) && error.code === "ENOENT") {
-          dirtyPathHashes[path] = createHash("sha256")
-            .update(`opod-eval:deleted\0${path}`, "utf8")
-            .digest("hex");
-          continue;
-        }
-        throw error;
-      }
-    }
-    return { gitSha: head || undefined, gitDirty, dirtyPathHashes };
-  } catch (error) {
-    console.warn(`Git provenance unavailable: ${errorMessage(error)}`);
-    return { gitSha: configuredSha };
-  }
-}
-
-async function gitOutput(args: string[]): Promise<string> {
-  const result = await execFile("git", args, {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return String(result.stdout);
-}
-
-function nulFields(value: string): string[] {
-  return value.split("\0").filter(Boolean);
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function resolveProfile(raw: string | undefined): Profile {

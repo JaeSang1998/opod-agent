@@ -25,6 +25,7 @@
     "eval:memory-structure": "EVAL_TARGET_PROVIDER=deterministic EVAL_TARGET_MODEL=memory-structure-deterministic EVAL_SIMULATOR_BASE_URL=http://127.0.0.1 EVAL_SIMULATOR_MODEL=not-used EVAL_CONSOLIDATION_MODE=none tsx evals/cli.ts run --profile smoke --suite evals/cases/p1-memory-structure.json --turns 1 --skip-judge",
     "eval:persona-router": "tsx evals/persona-router-cli.ts",
     "eval:persona-projection": "tsx evals/persona-source-projection-cli.ts",
+    "eval:persona-comparison": "tsx evals/persona-comparison-cli.ts",
     "eval:review:prepare": "tsx evals/cli.ts review-prepare",
     "eval:review:aggregate": "tsx evals/cli.ts review-aggregate",
     "eval:harbor:validate": "UV_CACHE_DIR=/tmp/opod-harbor-uv-cache uv run --isolated --with 'harbor==0.20.0' python evals/harbor/validate.py",

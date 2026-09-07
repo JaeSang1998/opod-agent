@@ -48,8 +48,8 @@ UTF-8 문자 중간 경계는 실패한다. 계획에 없는 블록·examples·c
 모두 선택된 조건은 배치 검증용이며 실제 selector·모델 품질·전체 Persona routing 완료를 뜻하지 않는다.
 
 `eval:validate`와 `test:eval*`에서 쓰는 fixture/test double은 schema와 집계기의 false-pass 방지용일
-뿐 대화 품질 실행으로 세지 않는다. 품질 근거는 실제 candidate, simulator, judge endpoint를 호출해
-생성된 `eval:long`/`eval:confidence` trajectory artifact뿐이다.
+뿐 대화 품질 실행으로 세지 않는다. H30 인증에는 실제 candidate, simulator, judge endpoint를 호출한
+`eval:long`/`eval:confidence` artifact가 필요하다. 아래 국소 비교는 별도 사용자 검수용 진단이다.
 
 ## P1-0 공용 메모리 구조 probe
 
@@ -99,6 +99,64 @@ stable prompt hash가 유지되는지 검사한다. 실제 모델 답변을 생�
 `qualityPassed`, `passed`, `certificationEligible`은 항상 `false`다. 구조 통과를 대화 자연스러움
 PASS로 해석하면 안 된다.
 
+## 고정 Persona·prefix 국소 비교
+
+`eval:persona-comparison`은 고정된 여러 `Persona[]` 입력을 기존 in-process HTTP target과
+`ChatService` → provider 경로로 비교한다. `preflight`는 합성 응답만 생성하고, `run`은 설정한
+실제 모델을 호출한다. simulator·judge는 사용하지 않으며 두 모드 모두 사용자 검수 전
+`qualityPassed`와 `certificationEligible`은 `false`다.
+
+```bash
+# 4명 × 1상황 × 3조건 × 1반복인 manifest의 로컬 연결 검사
+npm run eval:persona-comparison -- preflight \
+  --manifest /absolute/path/to/comparison-smoke-manifest.json \
+  --max-calls 12 --output /absolute/path/to/new-preflight-directory
+
+# 실행 범위와 비용이 승인된 뒤, 인증값을 노출하지 않는 방식으로 LLM_API_KEY를 환경에 제공
+LLM_BASE_URL=https://provider.example.com/v1 LLM_MODEL=approved-model \
+  EVAL_TARGET_TEMPERATURE=1 EVAL_TARGET_TOP_P=0.95 EVAL_TARGET_MAX_TOKENS=8192 \
+  npm run eval:persona-comparison -- run \
+  --manifest /absolute/path/to/comparison-smoke-manifest.json \
+  --max-calls 12 --output /absolute/path/to/new-model-directory
+```
+
+Manifest는 `schemaVersion: 1`, ISO `clock`, IANA `timezone`, `repetitions`, `reviewSeed`, 비교할
+조건 ID 쌍인 `pairs`, `conditions`, `casesFile/casesSha256`을 가진다. 각 condition은
+`id`, `personaFile`, 파일 byte의 `personaSha256`을 명시한다. 경로는 manifest 디렉터리를 기준으로
+해석한다. Case 파일의 `cases` 항목마다 고유 `id`, user/assistant가 번갈아 나오고 user로 끝나는
+`messages`, 선택적 `historyOffset`(기본 0), `reviewFocus`를 둔다. 검수 초점은 입력 설명이며
+자동 점수나 패킷의 정답 힌트로 사용하지 않는다.
+
+모든 파일 hash·ID·캐릭터 집합·이름/bio/canon 동일성과 전체 호출량을 첫 호출 전에 검사한다.
+`--max-calls`는 캐릭터 수 × 조건 수 × 상황 수 × 반복 수 이상이어야 하며 일부만 실행하는
+옵션이 아니다. `run`은 base URL·모델·출력 토큰 한도를 명시해야 한다. CLI는 `.env`나 DB를
+자동으로 읽지 않는다. DB 설정은 `DbSettingsProvider`의 agent 우선/planner fallback 규칙으로
+확인하고 기존 `baseUrlFrom`으로 operation URL을 base URL로 변환해, 실행 시작 때 고정한다.
+API 키는 manifest·결과·Git에 저장하지 않는다.
+
+응답마다 새 target/Store를 사용하고 같은 prefix를 복제하며 조건 순서를 순환한다. 생성 답변은
+다음 조건이나 반복의 history로 넣지 않는다. 고정 시각, tools 없음, Bond·사용자 Memory 미추적,
+consolidation 없음, optional Persona 선택 0으로 통일한다. 원격 `EVAL_TARGET_URL`은 이 로컬
+override를 보장할 수 없어 거부한다. 실제 selector·지속 Memory 회수·긴 대화 검증은 별도다.
+
+클라이언트 자동 재시도는 0회다. 첫 요청 실패, 응답 모델 누락/변경, `finish_reason != stop`,
+prompt provenance·hidden state 불일치에서 중단한다. 응답을 먼저 `responses.jsonl`에 저장하므로
+후속 실패가 앞선 유료 응답을 지우지 않는다. 재개·자동 재실행은 제공하지 않는다. 모델 공급자의
+내부 routing/reasoning 설정은 이 명령이 고정하지 않으므로, 자동 제공사 선택을 쓰는 결과는 그
+한계를 기록하고 통제된 품질 비교 전에 실제 제공사 조건을 확정해야 한다.
+
+출력 디렉터리는 새로 생성하며 0700, 파일은 0600이고 덮어쓰지 않는다. 기본 경로는 ignored
+`evals/results/`다. `comparison-report.json`은 요청 설정·관측 모델·토큰 사용량·prompt hash·
+source provenance를, `input-provenance.json`은 manifest hash·Git HEAD/dirty 파일 hash를 남긴다.
+중단 시 `incomplete.json`을 추가한다. 호출·출력 토큰 한도를 제한하지만 달러 예산을 직접 강제하지는 않는다.
+
+각 비교 쌍마다 `review-N.md`, `review-N-packet.json`, `review-N-submission.json`, 운영자용
+`review-N-private-key.json`이 생긴다. 같은 캐릭터·동일 prefix끼리만 짝지으며 조건과 모델을 가린다.
+이름·원문을 고쳐 쓰지 않으므로 캐릭터 익명화 패킷은 아니다. 사용자 1인이 `left/right/tie/both_bad/abstain`을
+먼저 작성하고 개별 판정을 보충한다. 자동 judge는 `not-judged`다. 기존 2인
+`eval:review:aggregate`는 이 1인 패킷의 집계 명령이 아니며, 1인 결과의 자동 품질 판정은 제공하지 않는다.
+합성 preflight 패킷에는 품질 검수 금지 안내가 붙는다.
+
 ## 공통 자연스러움 진단
 
 `eval:naturalness`는 특정 캐릭터용 suite가 아니다. 동일한 8개 시나리오를 실행 시점에 전달한
@@ -144,11 +202,12 @@ character-set의 content hash, snapshot label과 시각, 전체 및 캐릭터별
 `character:scenario` 셀, provisional 기준에 미달한 캐릭터 key가 기록된다. 전체 평균이 높더라도
 캐릭터 하나가 최소 pass rate 또는 평균 점수에 미달하면 `qualityPassed`는 `false`다.
 
-현재 in-process target은 synthetic 기본 Persona 하나만 소유한다. 운영 character-set을 proxy
+기본 in-process target은 synthetic Persona 하나만 소유한다. 운영 character-set을 proxy
 응답으로 잘못 평가하지 않도록 diagnostic run에는 `EVAL_TARGET_URL`이 필수다. character-set의
 `personaSummary`와 `canon`에는 judge가 필요한 검수된 공개 요약만 넣고 full prompt나 민감한 원문을
 복사하지 않는다. `personaVersion`은 source DB가 안정적인 version 또는 snapshot 식별자를 제공할 때만
 넣는 선택 필드다. 제공되지 않아도 실제 served prompt SHA-256이 비교 기준을 맡는다.
+위의 고정 Persona 비교 명령은 별도 로컬 Store override를 사용하며 이 diagnostic CLI의 원격 조건을 바꾸지 않는다.
 
 Naturalness suite의 `mode`는 `diagnostic`이다. 점수와 provisional quality 판정은 제공하지만
 `certificationEligible`과 H30 `passed`는 항상 `false`다. 품질 점수가 낮다는 이유만으로 실행

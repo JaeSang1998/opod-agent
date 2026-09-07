@@ -20,6 +20,37 @@ const source = {
 };
 
 describe("naturalness blind review", () => {
+  it("compares the same character without rewriting names or inventing an automatic verdict", () => {
+    const fixed = {
+      schemaVersion: 1, mode: "diagnostic",
+      trajectories: ["only-left", "only-right"].map((runId) => ({
+        runId, scenarioId: "same-prefix", passed: false, judgment: { passed: null },
+        character: { id: "character-alpha", name: "Alpha", personaSummary: "Alpha is a calm person." },
+        transcript: [
+          { turn: 1, user: "내일 면접이야", assistant: "응원할게요" },
+          { turn: 2, user: "잘 끝났어", assistant: runId === "only-left" ? "Alpha도 기뻐요." : "잘됐네요. Alpha도 응원했어요." },
+        ],
+      })),
+    };
+    const before = structuredClone(fixed);
+    const bundle = createNaturalnessBlindReviewBundle(fixed, "f".repeat(64), 5, { sameCharacter: true });
+    expect(fixed).toEqual(before);
+    expect(bundle.packets[0].pairs).toHaveLength(1);
+    expect(bundle.packets[0].items.map((i) => i.conversation.at(-1)?.assistant).sort())
+      .toEqual(fixed.trajectories.map((t) => t.transcript.at(-1)?.assistant).sort());
+    expect(bundle.key.packets[0]!.items.every((i) => i.automaticVerdict === "not-judged")).toBe(true);
+    const rendered = renderNaturalnessBlindReviewPacket(bundle.packets[0], { singleReviewer: true });
+    expect(rendered).toContain("사용자 1인");
+    expect(rendered).toContain("both_bad");
+    expect(rendered).not.toContain("only-left");
+    const submissions = [0, 1].map((i) => completeSubmission(bundle, i, { "only-left": "pass", "only-right": "pass" }));
+    const summary = aggregateNaturalnessBlindReviews(bundle.key, submissions);
+    expect(summary.judgeHumanAgreement.every((a) => a.comparable === 0 && a.rate === null)).toBe(true);
+    const rejected = structuredClone(fixed);
+    rejected.trajectories[1]!.transcript[0]!.assistant = "A different past reply";
+    expect(() => createNaturalnessBlindReviewBundle(rejected, "f".repeat(64), 5, { sameCharacter: true })).toThrow("identical fixed prefixes");
+  });
+
   it("creates two balanced packets without leaking identity, provenance, or automatic verdicts", () => {
     const bundle = createNaturalnessBlindReviewBundle(source, "a".repeat(64), 20260902);
 

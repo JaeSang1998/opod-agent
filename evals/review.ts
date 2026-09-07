@@ -18,7 +18,7 @@ const ReviewSourceSchema = z
         runId: z.string().min(1),
         scenarioId: z.string().min(1),
         passed: z.boolean(),
-        judgment: z.object({ passed: z.boolean() }),
+        judgment: z.object({ passed: z.boolean().nullable() }),
         character: z.object({
           id: z.string().min(1),
           name: z.string().min(1),
@@ -123,6 +123,7 @@ export function createNaturalnessBlindReviewBundle(
   rawSource: unknown,
   suiteReportSha256: string,
   seed: number,
+  options: { sameCharacter?: boolean } = {},
 ): NaturalnessBlindReviewBundle {
   const source = ReviewSourceSchema.parse(rawSource);
   if (!/^[a-f0-9]{64}$/.test(suiteReportSha256)) {
@@ -132,8 +133,8 @@ export function createNaturalnessBlindReviewBundle(
     throw new Error("review seed must be a non-negative safe integer");
   }
 
-  assertIdentityIsAbsentFromTranscripts(source.trajectories);
-  const canonicalPairs = createCanonicalPairs(source.trajectories, seed);
+  if (!options.sameCharacter) assertIdentityIsAbsentFromTranscripts(source.trajectories);
+  const canonicalPairs = createCanonicalPairs(source.trajectories, seed, options.sameCharacter);
   const baseOrder = hashSort(
     source.trajectories,
     (trajectory) => trajectory.runId,
@@ -215,7 +216,7 @@ export function createNaturalnessBlindReviewBundle(
     const keyItems = orderedTrajectories.map((trajectory, index) => ({
       itemId: numberedId("item", index),
       transcriptId: trajectory.runId,
-      automaticVerdict: trajectory.judgment.passed ? "pass" as const : "fail" as const,
+      automaticVerdict: trajectory.judgment.passed === null ? "not-judged" as const : trajectory.judgment.passed ? "pass" as const : "fail" as const,
       validTurns: trajectory.transcript.map((turn) => turn.turn).sort((left, right) => left - right),
     }));
 
@@ -365,6 +366,7 @@ export function aggregateNaturalnessBlindReviews(
       if (!review || review.verdict === "abstain" || review.verdict === "not-reviewed") continue;
       const automatic = automaticByTranscript.get(transcriptId);
       if (!automatic) throw new Error(`missing automatic verdict for ${transcriptId}`);
+      if (automatic === "not-judged") continue;
       comparable += 1;
       if (automatic === review.verdict) agreements += 1;
       if (automatic === "pass" && review.verdict === "fail") {
@@ -420,6 +422,7 @@ export function aggregateNaturalnessBlindReviews(
 
 export function renderNaturalnessBlindReviewPacket(
   rawPacket: unknown,
+  options: { singleReviewer?: boolean } = {},
 ): string {
   const packet = NaturalnessBlindReviewPacketSchema.parse(rawPacket);
   const items = new Map(packet.items.map((item) => [item.itemId, item]));
@@ -427,8 +430,8 @@ export function renderNaturalnessBlindReviewPacket(
     "# 캐릭터 챗 자연스러움 Blind Review",
     "",
     `- Packet: \`${packet.packetId}\``,
-    "- 자동 점수·판정·모델·캐릭터 식별자는 가려져 있습니다.",
-    "- 다른 reviewer와 상의하지 말고 pairwise를 먼저, 개별 판정을 나중에 작성하세요.",
+    options.singleReviewer ? "- 같은 캐릭터의 조건·자동 판정·모델을 가린 비교입니다. 발화 원문은 그대로입니다." : "- 자동 점수·판정·모델·캐릭터 식별자는 가려져 있습니다.",
+    options.singleReviewer ? "- 사용자 1인이 pairwise를 먼저, 개별 판정을 나중에 작성하세요. reviewer 간 일치도는 계산하지 않습니다." : "- 다른 reviewer와 상의하지 말고 pairwise를 먼저, 개별 판정을 나중에 작성하세요.",
     "- 최종 입력은 함께 제공된 submission JSON에 기록하세요.",
     "- Persona brief는 반응의 개연성을 판단하는 참고자료이며, 설정 소재를 언급했다는 사실 자체는 가점하지 마세요.",
     "",
@@ -457,7 +460,7 @@ export function renderNaturalnessBlindReviewPacket(
       "",
       renderConversation(right.conversation),
       "",
-      "선택: `left | right | tie | abstain`",
+      "선택: `left | right | tie | both_bad | abstain` (`both_bad`: 양쪽 모두 부적절)",
     );
   }
   sections.push("", "## 2. 개별 trajectory 판정");
@@ -517,17 +520,29 @@ export function renderNaturalnessBlindReviewAgreement(
 function createCanonicalPairs(
   trajectories: ReviewSourceTrajectory[],
   seed: number,
+  sameCharacter = false,
 ): CanonicalPair[] {
   const byScenario = new Map<string, ReviewSourceTrajectory[]>();
   for (const trajectory of trajectories) {
-    const values = byScenario.get(trajectory.scenarioId) ?? [];
+    const group = sameCharacter ? JSON.stringify([trajectory.scenarioId, trajectory.character.id]) : trajectory.scenarioId;
+    const values = byScenario.get(group) ?? [];
     values.push(trajectory);
-    byScenario.set(trajectory.scenarioId, values);
+    byScenario.set(group, values);
   }
   const pairs: CanonicalPair[] = [];
   for (const [scenarioId, values] of [...byScenario.entries()].sort(([left], [right]) =>
     left.localeCompare(right)
   )) {
+    if (sameCharacter) {
+      const [first, second] = values;
+      if (values.length !== 2 || !first || !second ||
+        JSON.stringify(first.character) !== JSON.stringify(second.character) ||
+        JSON.stringify(first.transcript.slice(0, -1)) !== JSON.stringify(second.transcript.slice(0, -1)) ||
+        first.transcript.at(-1)?.user !== second.transcript.at(-1)?.user ||
+        first.transcript.at(-1)?.turn !== second.transcript.at(-1)?.turn) {
+        throw new Error("same-character review requires exactly two conditions with identical fixed prefixes and briefs");
+      }
+    }
     if (values.length < 2) {
       throw new Error(`scenario ${scenarioId} needs at least two trajectories for pairwise review`);
     }
