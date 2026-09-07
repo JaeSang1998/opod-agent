@@ -4,15 +4,19 @@ opod-admin 파이프라인에서 확정된 페르소나(표준 블록 12종)와 
 게시 역반영)를 opod-agent 채팅에 적용하는 전략. 코드·스키마 조사 결과와 단계별
 결정을 기록한다.
 
-## 현재 상태 (2026-07-21 조사)
+> 2026-09-07: 자연스러움 개선의 현재 실험 계획은
+> [`Persona·Memory 연구 문서`](character-chat-products-persona-memory-research-2026-09-03.md) 10~11절이다.
+> 아래 7월 단계 기록은 구현 이력이며 전체를 새로 구현할 목록이 아니다. 새 정책·DDL은 별도 결정한다.
+
+## 현재 상태 (2026-07-21 조사, 2026-09-07 상태 갱신)
 
 | 영역 | 상태 |
 | --- | --- |
 | 페르소나 블록 주입 | raw read 완료. P1-1은 ID 기반 explicit routing read model을 구현했지만 실제 DB 매핑은 아직 미활성 (ADR-0002/0008) |
 | DM 연동 | 완료 — service-backend `sendMessage` → `OPOD_AGENT_URL` (OpenAI 호환 + `X-Opod-*` 헤더) |
 | 캐릭터 메모리 주입 | 동작 — 전 메모리를 canon으로 전량 주입 (운영자 세계관 + `auto:` 역반영 구분 없음) |
-| 관계 메모리 (유저별 Archival/Core/Summary) | 로직 완성 (ADR-0004/0005), 저장은 인메모리 stub — 재시작 시 소실 |
-| Consolidation 실행 | 정책·엔드포인트 있음, 큐 stub — 실행 주체 미정 (opod-worker 서비스 부재) |
+| 관계 메모리 (유저별 Archival/Core/Summary) | Postgres 지속화 구현 완료(Phase 3). DB 미설정 시 stub 사용 |
+| Consolidation 실행 | Postgres queue와 프로세스 내 worker 구현 완료(Phase 4). 실행 여부는 환경 설정에 따름 |
 
 ## 기능·동작 정의
 
@@ -24,18 +28,22 @@ opod-admin 파이프라인에서 확정된 페르소나(표준 블록 12종)와 
   `character_memories`로 흘러들어 전량 주입된다. P1-1은 Persona block만 다루므로
   이 경로의 relevance·수명 문제는 해결되지 않았다.
 - **유저별 관계 기억**: 관찰(중요도 채점) → 중요도 누적 → 성찰 → Core
-  자기갱신 구조 (Generative Agents + MemGPT, ADR-0005). 저장 지속화가 남은 일.
+  자기갱신 구조 (Generative Agents + MemGPT, ADR-0005). 저장 지속화는 완료했고,
+  검색 관련성·정정·망각·유효성의 품질 검증은 별도 과제다.
 
 ## 단계별 상태
 
 ### Phase 1 — 근황/세계관 주입 분리: **보류**
 
 `auto:` 역반영이 canon과 동일하게 전량 주입되는 현 구조를 유지한다.
-문제(프롬프트 무한 성장, 오래된 활동의 canon화)는 볼륨이 커져야 실재한다.
+당시에는 데이터 규모를 재검토 기준으로 삼았다. 현재 자연스러움 실험에서는 적은 데이터에서도
+과거 사건의 현재화·무관한 소재 반복이 있는지 조사하며, 건수만으로 품질 문제 유무를 판정하지 않는다.
 
-**재개 트리거**: `auto:` 메모리 30개 초과 관측 시. 그때 운영자 세계관(전량
+**당시 적용 변경 재검토 트리거**: `auto:` 메모리 30개 초과 관측 시. 그때 운영자 세계관(전량
 canon) / `auto:` 역반영(최근 N개만 "최근 근황" 섹션) 분리 + LLM 선별을 도입.
 메모리 전체 100개 초과 시 pgvector 하이브리드 검토(기존 확정 결정).
+이 수량 기준을 P1의 격리 원인 조사 선행 조건으로 삼지 않는다. 조사 결과가 나오기 전에
+전량 canon 정책을 바꾸거나 위 분리 방식·인덱스를 자동 채택하지 않는다.
 
 ### Phase 2 — 첫인사 + 호감도 게이트: **TODO (설계만 확정)**
 
@@ -145,6 +153,6 @@ canon) / `auto:` 역반영(최근 N개만 "최근 근황" 섹션) 분리 + LLM �
   좌표(`opod.characters`/`character_personas`/`character_memories`)를 읽는다.
   스키마 변경은 opod-service-backend(오너) 기준으로 두 소비자를 함께 조율할 것
   (ADR-0002의 트레이드오프).
-- 2026-09-07 현재 실행 중인 로컬 Postgres 복제본은 Persona 관련 테이블의 행이
-  0건이다. 실제 캐릭터 매핑 E2E는 개발 데이터 스냅샷을 다시 격리하거나 rich
-  seed를 사용해 수행할 것.
+- 2026-09-07 최초 인계에서 로컬 복제본은 0행이었으나, 같은 날 개발 DB 읽기 전용 접속으로
+  전체 캐릭터 4행·Persona 45행·character memory 79행을 확인했다. 활성 조건과 source hash는
+  후속 snapshot 준비 시 확인한다. 실제 매핑 E2E는 격리 입력에서 수행한다.

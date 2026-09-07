@@ -1,18 +1,20 @@
 # 경쟁 캐릭터챗 Persona·Memory 구조 및 사용법 비교 연구
 
 - 작성일: 2026-09-03
-- 상태: 외부 비교 조사 완료, OPOD P1 구조 실험 입력안
+- 상태: 외부 비교 조사 + 2026-09-07 계획 재검토·S1 구현·첫 모델 smoke 12회 완료. 사용자 검수·반복 본 비교 대기
 - 범위: Character.AI, Kindroid, Nomi, Replika, SillyTavern/Tavern Card,
   Backyard AI, AI Dungeon, Convai, Inworld와 공개 메모리 프레임워크·연구
 - 제한적 공개면 추가 확인: CHAI, PolyBuzz, CrushOn.AI; Janitor AI, Talkie
 - OPOD 적용 범위: 특정 캐릭터가 아닌 공통 Persona/Memory/Context 계약
 - 선행 문서: [`character-chat-architecture-research-2026-09-02.md`](character-chat-architecture-research-2026-09-02.md)
-- 현행 계획: [`character-chat-p0-baseline-plan-2026-09-02.md`](character-chat-p0-baseline-plan-2026-09-02.md)
+- 현행 P1 계획: 이 문서의 10~11절. P0 범위와 실행 이력은 [`P0 계획`](character-chat-p0-baseline-plan-2026-09-02.md)에 보존한다.
 - 현행 결과: [`reports/character-chat-p0-before-after-2026-09-03.md`](reports/character-chat-p0-before-after-2026-09-03.md)
 
 ## 1. 결론
 
-경쟁 제품마다 이름은 다르지만, 자연스러운 캐릭터챗을 만드는 공통 원리는 같다.
+기존 제품 조사에서 얻은 OPOD용 설계 가설은 다음과 같다. 외부 제품이 비슷한 정보 구분을
+제공한다는 사실만으로 OPOD의 원인이나 개선 효과가 증명되지는 않는다. 이번 재검토는 저장소
+코드와 기존 사용자 검수·실행 기록을 대조했으며 외부 제품의 최신 사양을 재검증한 작업은 아니다.
 
 > **모든 설정을 모델에게 항상 보여주는 것이 아니라, 지금 필요한 종류의 정보만 지금 맞는
 > 위치와 강도로 보여준다.**
@@ -28,18 +30,18 @@
 7. 사용자와의 장기 사실·관계 기억
 8. 운영 메타데이터처럼 프롬프트에 절대 넣지 않을 정보
 
-OPOD는 현재 `greeting` 하나만 제외하고 모든 Persona block을 매 턴 그대로 넣고, 모든
-character memory를 canon으로 전량 넣는다. 이 구조에서는 촬영, 운동, 수업, 필름, 게시물처럼
-캐릭터를 설명하는 소재가 **대화 주제 후보**로 계속 활성화된다. 공유 자연스러움 지시를 뒤에
-추가해도 모델이 이미 본 과잉 활성 문맥을 완전히 지우지는 못한다.
+매핑 없는 OPOD 경로는 `greeting` 호환 규칙 외의 Persona block과 모든 character memory를
+매 턴 넣는다. P1-1 Router는 구현됐지만 실제 DB 매핑은 미적용이다. 이 전량 주입이 무관한
+소재 발화에 기여한다는 가설은 사용자 증상과 맞지만, 캐릭터 원문·canon·공통 지침·Bond·모델의
+영향을 분리하지 않았으므로 단일 원인으로 확정할 수 없다.
 
-따라서 이번 조사에서 얻은 가장 중요한 판단은 다음과 같다.
+조사와 코드에서 도출한 개선 후보는 다음과 같다.
 
-- 문제는 Persona가 약한 것이 아니라 **Persona와 lore의 경계가 없는 것**이다.
-- 문제는 기억이 부족한 것이 아니라 **회수하지 않을 선택과 유효기간이 없는 것**이다.
-- 문제는 캐릭터의 일상이 없는 것이 아니라 **과거 게시물과 현재 상태가 구분되지 않는 것**이다.
-- 문제는 질문 규칙 하나가 아니라 **매 턴 어떤 대화 행동을 할지 조절하는 상태가 없는 것**이다.
-- 자동 점수보다 먼저 필요한 것은 **실제로 어떤 Persona·Memory가 주입됐는지 보는 관측성**이다.
+- Persona의 성격·판단 원리와 상세 lore의 사용 조건을 구분한다.
+- 사용자 기억은 관련성·유효성을 확인하고 필요 없으면 회수하지 않는다.
+- 캐릭터의 과거 사건과 현재 상태를 구분한다.
+- 질문·자기 노출·화제 전환의 적절성을 평가한다. 별도 대화 상태 머신이 필요하다는 결론은 보류한다.
+- 실제 주입 source를 기록하되 모델의 실제 정보 사용이나 품질과 동일시하지 않는다.
 
 또한 2026-09-03의 전체 대화 48턴은 `retrievedMemoryCount=0`이었고 매 턴 관측된 동적
 section도 `current_moment`, `bond`뿐이었다. 동일 문맥 25회도 각 지점의 관계·사용자 기억을
@@ -607,8 +609,8 @@ Persona knowledge 사용을 Anchoring, Selecting, Bounding, Enacting으로 나�
 - Bounding: 무관하거나 모르는 사실을 끌어오지 않음
 - Enacting: 설정을 읽어 주지 않고 실제 말과 판단으로 표현
 
-사용자가 지적한 촬영·게시물·직업 소재 반복은 Persona가 부족해서가 아니라 Selecting과
-Bounding이 실패하고, Enacting 대신 exposition이 나온 사례다.
+사용자가 지적한 촬영·게시물·직업 소재 반복은 위 분류로는 Selecting·Bounding·Enacting의
+실패 후보에 해당한다. 이 분류만으로 원인이 정보 주입인지 원문·지침·모델인지 결정하지 않는다.
 
 ### 6.6 단일 Q&A가 아니라 사용자 목적을 가진 다중 턴으로 평가한다
 
@@ -639,14 +641,15 @@ Open-domain dialogue의 자동 metric은 사람 판단과 잘 맞지 않는 경�
 
 ## 7. OPOD 현행 구조와의 직접 대조
 
-### 7.1 확인된 구현
+### 7.1 확인된 구현 (2026-09-07 코드 재확인)
 
 | 현행 OPOD | 확인 위치 | 구조적 결과 |
 | --- | --- | --- |
-| Persona block은 `title`, `content`만 가짐 | `src/persona/persona.ts` | 용도·수명·주입 정책을 표현할 수 없음 |
+| read model은 optional `id/kind/injection`을 지원하지만 DB raw adapter는 미분류 | `src/persona/persona.ts`, `src/persona/postgres-persona-store.ts` | 명시적 manifest가 있어야 새 정책 적용 |
 | DB의 모든 active block과 character memory를 그대로 읽음 | `src/persona/postgres-persona-store.ts` | 운영·콘텐츠·DM·lore가 한 묶음 |
-| exact title이 `greeting`인 block만 제외 | `src/chat/system-prompt.ts` | 나머지는 모두 reactive reply의 stable prompt에 상시 주입 |
-| 모든 character memory를 Established facts로 전량 주입 | `src/chat/system-prompt.ts` | 최근 게시·과거 사건도 영구 canon과 같은 강도 |
+| 매핑 없으면 exact `greeting` 호환 제외 외 전량 주입 | `src/persona/persona-router.ts` | 신규 Router만 배포해도 실제 캐릭터 경로는 유지 |
+| `retrieved` selector는 주입 경계만 있고 기본 구현은 없음 | `src/chat/chat-service.ts`, `src/bootstrap/container.ts` | manifest만 공급하면 optional lore는 선택되지 않음 |
+| DB에는 Memory `type`이 있으나 adapter는 `content`만 읽어 canon으로 전량 주입 | `src/persona/postgres-persona-store.ts`, `src/chat/system-prompt.ts` | 기존 event/fact/goal/preference/relationship/routine 구분이 runtime에서 사라짐. type은 유효성·현재 상태를 보장하지 않음 |
 | Archival retrieval query가 최신 user text 한 개 | `src/chat/chat-service.ts` | `그건 왜?` 같은 후속 표현의 대상을 잃기 쉬움 |
 | min-max ranking 뒤 threshold 없이 top-K | `src/memory/retrieval.ts` | 전체가 무관해도 상대적으로 가장 높은 기억이 선택됨 |
 | Core는 항상, Summary는 존재하면 항상 주입 | `src/chat/turn-context.ts` | opaque text가 현재 message보다 강하게 작용할 수 있음 |
@@ -660,7 +663,7 @@ Open-domain dialogue의 자동 metric은 사람 판단과 잘 맞지 않는 경�
 개발 DB 읽기 전용 snapshot에는 활성 캐릭터 4명, Persona 45 block, character memory 79건이 있었다.
 캐릭터별로 9~12개의 Persona block과 13~25개의 character memory를 항상 넣는 구조다.
 
-사용자 검수에서 나온 다음 현상은 특정 캐릭터의 말재주 문제보다 공통 조립 문제로 설명된다.
+사용자 검수에서 다음 현상이 여러 캐릭터에 걸쳐 확인됐다.
 
 - 인사에서 날씨·장소·방문 이유를 먼저 가정함
 - 직업의 수업·촬영·회원·보정 업무를 빠르게 설명함
@@ -668,8 +671,10 @@ Open-domain dialogue의 자동 metric은 사람 판단과 잘 맞지 않는 경�
 - Persona 소재 하나를 계속 대화 주제로 재사용함
 - 짧은 한국어가 번역투·상품 설명·업무 jargon처럼 변함
 
-캐릭터마다 표면 소재만 다르고, 원인은 `항상 주입 → 높은 salience → 무관한 enactment`로 같다.
-따라서 권도건 전용 금칙어나 나희 전용 촬영 제한을 추가하면 안 된다.
+`항상 주입 → 소재가 두드러짐 → 무관한 발화`는 이 증상을 설명하는 가설이다. 다중 캐릭터에서
+증상이 반복됐다는 사실은 공통 경로 검토의 근거이며, 동일 원인의 증명은 아니다. 원문 자체의
+품질과 모델 표현 능력도 경쟁 가설로 남긴다. 사용자 결정에 따라 캐릭터별 runtime 금칙어는
+추가하지 않고 동일 조건에서 공통 경로의 효과를 비교한다.
 
 ### 7.3 이전 테스트가 증명한 것과 증명하지 않은 것
 
@@ -687,9 +692,15 @@ Open-domain dialogue의 자동 metric은 사람 판단과 잘 맞지 않는 경�
 | Core/Summary가 자연스러움을 높임 | 검증 안 됨 |
 | Persona 구조와 Memory 구조 중 무엇이 원인인지 | 분리 안 됨 |
 
-따라서 다음 실험은 실제 seed memory와 source provenance가 반드시 있어야 한다.
+사용자 Memory 효과를 평가하는 실험은 실제 seed와 provenance가 있어야 한다. Persona-only
+실험에서는 사용자 기억을 양쪽 모두 비워도 되며, 이때 사용자 Memory 품질은 판정하지 않는다.
 
 ## 8. OPOD에 맞는 목표 구조
+
+8~9절의 확장 필드와 조립 방식은 연구 후보이며 구현 체크리스트나 확정 DB 정책이 아니다. 필요한 필드는
+10~11절의 개별 실험에서 증거가 생긴 뒤 선택한다. 현재 승인된 Router 계약은 ADR 0008의
+네 injection 값이며 `state`, token budget, 관계 다축 모델의 추가를 승인한 것으로 읽지 않는다.
+
 ### 8.1 Persona 계약
 
 DB schema를 바로 확정하기 전에 runtime에서 검증할 최소 개념은 다음과 같다.
@@ -711,13 +722,16 @@ PersonaSection
 | identity | 이름, 역할, 핵심 가치, 현재 행동을 바꾸는 formative fact | `always`, 짧게 |
 | behavior | 상황·관계별 반응 원리, emotional logic | `always`, 짧게 |
 | voice | 문장 길이, 직접성, 어휘, 유머 경향 | `always`, 매우 짧게 |
-| example | casual/tense/repair 등 실제 대화 궤적 | `start_only` 또는 history가 짧을 때 |
-| greeting | 캐릭터가 먼저 시작하는 첫 message | `start_only` |
-| lore | 직장, 취미, 인물, 과거 사건, 세계관 | `retrieved` |
+| example | casual/tense/repair 등 실제 대화 궤적 | 실험 후 결정. 첫 턴 이후 제거가 voice 유지에 미치는 영향 확인 |
+| greeting | 캐릭터가 먼저 시작하는 첫 message | proactive 발송과 reactive 첫 응답을 구분. `start_only` 자동 매핑 금지 |
+| lore | 직장, 취미, 인물, 과거 사건, 세계관 | 상세 사실은 `retrieved` 후보. 지속적 판단에 필요한 핵심 사실은 identity에 유지 가능 |
 | creator_note | 제작 지침, 콘텐츠 스타일, 운영 memo | `never_prompt` |
 
 `content_style`이 실제 DM behavior에 필요한 항목인지, 게시물 생성용 운영 지침인지 명확히
 분류해야 한다. 후자라면 같은 character 데이터여도 Agent prompt에는 들어가면 안 된다.
+한 block에 DM voice와 제작 지침이 섞여 있으면 ID 매핑만으로 분리가 되지 않는다. 원문을
+임의로 잘라 분류하지 말고 혼합 블록으로 기록하고, 해당 경계만 별도로 설계한다. `start_only`는
+첫 assistant 응답의 context 주입일 뿐, 캐릭터가 먼저 메시지를 보내는 기능이 아니다.
 
 ### 8.2 Character lore와 Current State
 
@@ -841,134 +855,242 @@ recent 2~4 turns + current topic/open loop로 query 작성
 
 핵심은 `topK=6`이 아니라 `0..6`이다. 인사와 단답에서는 0이 정상 결과여야 한다.
 
-## 10. 다음 구조 실험: 2×2로 원인을 분리한다
+## 10. 실험 계약 — 품질과 원인을 함께 확인한다 (2026-09-07 수정)
 
-Persona와 Memory를 함께 바꾼 결과만 보면 무엇이 좋아졌는지 알 수 없다. 같은 visible dialogue,
-같은 hidden state, 같은 모델·sampling snapshot에서 다음 네 조건을 비교한다.
+목표는 불필요한 설정 발화를 줄이면서 문맥 연결, 캐릭터의 관점·말투, 필요한 회상을 유지하는
+것이다. source 수 감소, 짧은 답변, 질문 0회만으로 성공을 선언하지 않는다.
 
-| 조건 | Persona 조립 | Memory 조립 | 목적 |
+### 10.1 근거와 가설의 구분
+
+| ID | 근거와 상태 | 아직 모르는 것 | 구분할 비교 |
 | --- | --- | --- | --- |
-| A | 현행 전량 주입 | 현행 top-K | 기준선 |
-| B | typed Persona router | 현행 top-K | Persona/lore 분리 효과 |
-| C | 현행 전량 주입 | threshold+validity+none | Memory gate 효과 |
-| D | typed Persona router | threshold+validity+none | 결합 효과와 interaction |
+| H1 | `repo-evidenced`: raw Persona는 미분류이고 무관 소재 발화가 검수에서 관측됨 | Persona routing의 실제 자연스러움·개성 유지 효과 | canon과 나머지 입력을 고정한 Legacy / Routed 비교 |
+| H2 | `repo-evidenced`: character memory 전량이 canon으로 주입됨 | 과거 게시물·중복 소재의 기여도 | H1 결과와 source 중복 조사를 보고 character lore만 별도 변경 |
+| H3 | `repo-evidenced`: 합성 사용자 Memory에서 무효 후보도 top-K 선택됨 | 실제 대화 품질과 정정·망각 저장 lifecycle의 정확성 | 사용자 Memory가 실제 존재하는 별도 positive/negative probe |
+| H4 | `repo-evidenced`: 시간·Bond 지침과 user text 뒤 context 배치가 존재함 | 어느 지침·배치가 소재 비약과 질문 패턴에 기여하는지 | 같은 내용으로 순서만 변경, 이후 지침 하나씩 비교 |
+| H5 | `repo-evidenced`: P0-R1 뒤에도 지적된 한국어 표현이 일부 남음 | source 원문, 공통 표현 지침, 모델 중 남은 병목 | 적절한 context 조건에서도 재현되는 문장을 대상으로 하나씩 비교 |
 
-### 10.1 동일한 hidden-state fixture
+H1~H5는 기여도 가설이며 단일 원인 판정이 아니다. 외부 서비스의 구조는 실험 후보의 근거로만
+사용한다. H3를 사용자 기억이 비어 있던 P0 대화 실패의 원인으로 소급하지 않는다.
 
-각 캐릭터마다 다음 fixture를 동일 형식으로 만든다. 내용은 캐릭터마다 달라도 역할과 난이도는 같다.
+### 10.2 비교 입력과 데이터 경계
 
-- relevant stable fact 1개
-- irrelevant but high-importance fact 1개
-- stale episodic event 1개
-- correction으로 supersede된 fact pair 1개
-- explicit current state 1개와 expiry된 state 1개
-- relationship/register state 2단계
-- session open loop 1개
+- 비교 시작점은 현재 브랜치의 P0-R1 공통 지침을 포함한 Legacy 경로다. 9월 2일 답변을 현재
+  후보와 직접 비교해 Router 효과로 해석하지 않는다. 같은 실행에서 Control도 새로 생성한다.
+- 활성 캐릭터 전부에 같은 case 구조를 사용한다. snapshot 시각, 활성 조건, source ID와 content
+  hash, mapping/selector 버전, 코드 revision, 모델·sampling 설정을 기록한다.
+- 같은 pair는 visible history, history offset, 시각/timezone, Bond, Core/Summary, canon,
+  사용자 기억과 도구 설정을 동일하게 시작한다. 변수 하나만 바꾸며 stable prompt hash는
+  조건별로 기록한다. 조건 간 hash 차이는 의도된 변경이고, 각 조건의 턴 간 안정성은 별도 검사다.
+- 실제 개발 DB는 읽기 전용 source다. 승인된 범위의 캐릭터·Persona·character memory만 격리한다.
+  실제 사용자 대화·사용자 기억·인증 정보·admin 설정은 평가 fixture에 복제하지 않는다.
+- 각 조건·반복은 독립적인 임시 Memory/Queue를 사용한다. 일반 `PostgresMemoryStore.retrieve`
+  자체가 last-access를 갱신하고 post-turn에도 쓰기가 있으므로 개발 서비스에 평가 채팅을 직접
+  보내지 않는다. 모델·embedding 설정은 실행 시 별도 공급하며 개발 DB 전체 연결로 대체하지 않는다.
+- 합성 구조 suite는 전체에 positive/negative probe가 존재해야 한다. negative case의 회수 0은
+  정상이다. 매 턴 주입이 양수여야 한다는 preflight로 empty retrieval을 실패 처리하지 않는다.
 
-### 10.2 테스트 묶음
+### 10.3 두 종류의 Persona 비교
 
-| Suite | 핵심 질문 | 자동으로 확인할 것 | 사람이 볼 것 |
+1. **선택이 올바르다고 가정한 진단:** 고정된 대화 prefix와 source만 보고 사전에 사람이 선택한
+   `retrieved` ID를 기존 selector 경계에 공급한다. 생성 답변·미래 발화는 보지 않는다. 이 결과는
+   routing과 입력 선별이 도움이 될 수 있는지의 진단이며, 자동 선택기 성능이나 서비스 적용 근거가 아니다.
+2. **실제 선택 경로 검증:** 위 진단에서 이득이 확인된 뒤 공통 selector가 입력에서 직접 ID를
+   선택하도록 한다. selector 없는 empty 결과나 합성 fixture의 exact 문자열 rule을 실사용
+   retrieval로 간주하지 않는다. 중립 발화, 직접 질문, 대명사 후속 질문, 주제 종료를 모두 확인한다.
+
+첫 비교에서는 Persona 원문을 재작성하지 않고 canon도 고정한다. 매핑만으로 identity/voice와
+lore가 분리되지 않는 혼합 블록은 별도 기록한다. Persona와 canon에 동일 소재가 있으면
+Persona-only 무효과를 H1 기각이나 H2 입증으로 단정하지 않는다. 구분이 필요할 때만 canon
+선별을 추가 요인으로 둔 2×2를 실행한다. 원문 재작성은 routing과 다른 실험이다.
+
+### 10.4 case와 합격 기준
+
+| Case | 구조 확인 | 사용자 검수 |
+| --- | --- | --- |
+| 중립 인사·단답 | 불필요한 optional lore/user memory 제외. identity·voice가 0일 필요는 없음 | 근거 없는 전제 없이 반응하는가 |
+| 의견·장난·위로·반대 | 핵심 identity/behavior/voice 보존 | 소재 설명 없이 관점과 말투가 유지되는가, 모두 같은 인물처럼 되지 않는가 |
+| 관련 자기 이야기·질문 | 관련 배경 source 제공 가능 | 질문에 충분히 답하고 상호적으로 자기 몫을 내는가 |
+| 직접 회상·짧은 후속 질문 | expected ID 포함, 대명사의 대상 유지 | 기억을 적절히 활용하고 대화를 이어가는가 |
+| 무관 고중요도 기억·화제 종료 | 선택 0 또는 이전 optional source 제외 | 억지 callback·소재 반복을 멈추는가 |
+| 현재 활동 질문 | 현재 상태 없음/유효/만료를 다른 case로 표시 | 모르는 현재 활동을 과거 설정에서 만들지 않는가 |
+| 정정·망각 | 무효 archival source 제외와 Core/Summary/history 잔존을 구분 | 정정된 사실 반영, 직간접 재노출 여부 |
+| 지적 후 복구·긴 흐름 | 반복 실패와 경과 기록 | 문맥 복구, 적절한 질문, 자연스러운 한국어, 화제 다양성 |
+
+- 기존 22개 코멘트를 실패 의미의 기준으로 유지한다. 동일 문구만 외워 통과하지 않도록 표현을
+  바꾼 미사용 case를 미리 분리하고 mapping/selector 조정에 사용하지 않는다. tuning case와
+  holdout의 결과를 따로 보고하며 holdout을 보고 수정했다면 새 holdout이 필요하다.
+- 무료 구조 확인 뒤 소규모 모델 smoke, 이후 비교할 case마다 최소 3회 반복한다. 실제 호출 수와
+  비용 상한은 실행 계약에서 정한다. 같은 seed를 공급해도 동일 출력이 보장됐다고 쓰지 않는다.
+- 동일 prefix의 국소 응답 비교와 긴 대화 평가는 분리한다. 긴 대화에서 각 조건은 자기 history를
+  이어가며 출발 hidden state와 scripted 사용자 흐름은 같다. simulator가 다른 사용자 발화를
+  만든 결과는 흐름 관찰 자료로 표시하고 동일 입력 효과로 합산하지 않는다.
+- 사용자에게는 같은 캐릭터의 조건만 가린 후보를 무작위 좌우 순서로 보여준다. 원문을 캐릭터
+  이름 제거용으로 재작성하지 않는다. 두 후보에 같은 중립적인 Persona brief를 제공한다.
+- source badge, injection 수, 모델/조건 이름은 최초 판단 뒤 확인한다. 먼저 보여 주면 구조를
+  잘 지킨 후보를 좋은 답변으로 선택하도록 유도할 수 있다.
+- 매 pair에 선호/동률/둘 다 부적절과 원문 근거를 기록하고 문맥 연결·개성·회상·한국어를 함께
+  본다. 캐릭터×case별 win/tie/loss와 결함 건수를 반복 수와 함께 보고한다. 작은 표본을 통계적
+  확증이나 전체 사용자 선호로 일반화하지 않는다.
+- 구조 gate는 누락·잘못된 주입을 판정한다. 한 캐릭터의 개성 소실, 필요한 회상 실패, 무효 기억
+  노출 등 회귀가 있으면 전체 평균 개선으로 덮지 않는다. 원인 수정·재검수 전 적용 후보가 아니다.
+- 품질 판정은 기존 결정대로 사용자 1인이 한다. 추가 reviewer 모집이나 2인 calibration 재개는
+  요구하지 않는다. 조건 가림 여부와 1인 검수 provenance를 기록하고 gold로 승격하지 않는다.
+- source가 prompt에 들어갔다는 사실과 답변에서 사용됐다는 해석을 분리한다. ID trace는 전자만
+  증명한다. 후자는 원문 검수 근거 또는 명시적 source 제거 비교로 평가하며 자동 확정하지 않는다.
+
+### 10.5 결과에 따른 다음 행동
+
+- routing 진단에서 개선되고 실제 selector에서도 유지됨: 해당 효과와 회귀 근거를 사용자 검수에 올린다.
+- 사전 선택 진단만 좋음: 입력 선택 문제를 먼저 해결한다. Router 성공으로 서비스에 적용하지 않는다.
+- 불필요 소재는 줄지만 캐릭터성·회상이 저하됨: 분류 단위와 identity/voice 보존을 재검토한다.
+- Persona 비교가 무효과/혼재: canon 중복과 지침·배치의 경쟁 가설을 조사한다. 임의로 정책·필드 수를 늘리지 않는다.
+- 적절한 context에서도 한국어·대화 행동이 어색함: source 표현, 공통 지침, 모델 비교를 개별
+  실험으로 제안한다. 모델 차이를 입력 구조의 효과와 섞지 않는다.
+
+## 11. 실행 순서와 경계 (2026-09-07 수정)
+
+이 절이 다음 작업의 계획 정본이다. 기존 P1-0/1 결과는 보존하며 후속 구현과 비용이 드는 실행은
+각 단계의 구체적 입력·변경 파일·호출량이 준비된 뒤 기존 승인 경계를 따른다. 계획 수정 이후
+사용자의 후속 진행 요청으로 S1 조사를 수행했다. 최초 원문 저장 요청은 자동 승인 검토에서
+거부됐으나 사용자가 해당 경로의 저장·분석을 명시적으로 승인한 뒤 snapshot과 전수 조사표를
+생성했다. 이어 승인된 혼합 블록 8개/22구간의 실험 입력 분리를 구현·검증했다. 전체 실행용
+mapping·제품 routing 적용·반복 본 비교는 미실행이다.
+후속 examples 검토에서는 4개 블록의 54개 문답을 조사하고, 원문 / 혼합 분리 / 혼합 분리에서
+예시만 미주입하는 A/B/C 입력과 96건의 준비 검사를 마쳤다. C는 로컬 비교 후보이며 제품 정책은 유지한다.
+이후 기존 HTTP target에 고정 Persona·clock을 연결하고 같은 캐릭터 review 패킷을 구현했다.
+별도 CLI 합성 응답 96건과 회귀 검증을 통과했다. 사용자가 안내한 DB에서 현재 모델 설정을
+확인하고 12회 인사 smoke의 입력·요청 설정·비용 추산을 제시했다. 후속 사용자 승인으로 실제
+모델 12회가 완료됐으며 청구액은 $0.020053869다. 사용자 원문 검수와 반복 본 비교는 남아 있다.
+
+### 11.1 범위와 결정 기록
+
+| ID | 분류 / 근거 | 상태 | 현재 처리 |
 | --- | --- | --- | --- |
-| Neutral opening | `ㅎㅇ`, `왔어`, `뭐해`에 배경이 튀는가 | injected source=0 또는 current state만 | 뜬금없는 날씨·장소·직업·게시물 여부 |
-| Persona enactment | 설정을 말하지 않고 인물답게 반응하는가 | lore source와 motif 반복 | 말투·판단이 자연스럽게 구분되는가 |
-| Positive recall | 명확한 cue에 맞는 기억을 쓰는가 | expected memory ID, score, rank | 회상이 과시가 아니라 대화에 도움이 되는가 |
-| Negative recall | 무관한 고중요도 기억을 참는가 | retrieved/injected 0 | 감시받는 느낌이나 억지 callback 여부 |
-| Correction | 최신 사실만 쓰는가 | superseded ID 제외 | 자연스럽게 정정 내용을 반영하는가 |
-| Forget | 잊어 달라는 내용을 다시 쓰지 않는가 | forgotten ID 제외 | 직접·간접 재노출 여부 |
-| Current state | 명시한 현재 상황만 이어지는가 | source, valid time, expiry | 현재와 과거를 혼동하는가 |
-| Short follow-up | `그건 왜?`, `아니 그거 말고`를 잇는가 | query에 recent turns 포함 | 대명사·수정 의도 이해 |
-| Repair | 지적 뒤 즉시 바뀌는가 | repeated failure code | 변명·상담체 없이 방향을 바꾸는가 |
-| Long flow | 여러 주제에서 한 motif로 수렴하는가 | topic/move/question 분포 | 실제로 계속 말하고 싶은가 |
+| D1 | in-scope / `user-confirmed` | active | 공통 경로 개선, 사용자 원문 검수, 캐릭터별 runtime 예외 금지 |
+| D2 | preserve-current-behavior / `repo-evidenced` | active | ADR 0008의 네 경로와 legacy fallback, DB 원문·schema 유지 |
+| D3 | in-scope / `agent-assumed` | active | 아래 순서를 가역적인 연구 계획으로 채택. 성능 효과는 미확정 |
+| D4 | in-scope / `repo-evidenced` | active | 개발 DB 접속·활성 4/45/79와 격리 snapshot 확인. hash로 원문 불변성을 검증. Memory 기존 type을 adapter가 읽지 않는 사실 확인 |
+| D5 | deferred / `recommended-unconfirmed` | deferred | greeting의 제품 변경, examples 최종 정책, selector 방식·threshold는 해당 단계에서 결정. 혼합 분리는 D9, 예시 진단 입력은 D10으로 이동 |
+| D6 | deferred / `recommended-unconfirmed` | deferred | Current State 정본·만료 정책, Bond/말투 제품 동작, 모델 교체는 비교 근거 뒤 결정 |
+| D7 | 계획 수정 턴 한정 / `user-confirmed` | superseded | 당시 계획 수정만 진행. 후속 진행 범위는 D8로 대체 |
+| D8 | in-scope / `user-confirmed` | active | 지정된 ignored 경로에 캐릭터 설정·Persona·Memory snapshot 저장 및 S1 조사 승인·완료. 실제 사용자 데이터·인증 정보 제외 |
+| D9 | in-scope / `user-confirmed` | complete | 혼합 블록 8개의 원문 22구간을 실험 입력에서만 분리하도록 승인·구현·검증. 다른 37개·examples·canon 유지. examples 변경은 별도 후속 결정 |
+| D10 | in-scope / `agent-assumed` | active | examples 54문답 조사와 A/B/C 진단 입력 준비. C의 네 ID 미주입 후보는 제품 정책으로 채택하지 않음. 모델 smoke 실행은 D12 |
+| D11 | in-scope / `user-confirmed` | implementation-complete | 기존 모델 경로의 고정 입력 비교와 1인 review 연결·검증 완료. 유료 smoke 실행은 D12 |
+| D12 | in-scope / `user-confirmed` | execution-complete / review-pending | DB 모델로 12회, 최대 출력 8192, 재시도 0의 실행안을 승인받아 완료. 청구액 $0.020053869, 실제 검증 32개 통과. 5개 제공사가 섞여 인과 해석 제한. 288회 확대는 포함하지 않음 |
 
-### 10.3 반복과 검수
+계획 문서 수정 당시 blocking decision은 0개였다. 실제 source 조사 뒤 S2 준비의 첫 결정으로
+D9가 구체화됐고 후속 승인으로 완료했다. D5/D6는 나머지 후속 결정을 보류한 기록이며 확정 정책이나 구현 승인이 아니다.
+작은 첫 실험에 필요하지 않은 상태 모델·그래프·새 인프라는 구현 목록에서 제외한다.
 
-- 생성 변동성을 보기 위해 각 조건은 같은 case에서 최소 3회 생성한다.
-- 모든 활성 캐릭터에 같은 suite structure를 실행한다.
-- 캐릭터 이름과 조건 A/B/C/D를 숨기지는 않더라도, 최소한 조건 label과 순서는 검수 화면에서 가린다.
-- 사용자의 기존 리뷰만 개선 기준으로 사용한다. LLM judge는 diagnostic을 재개하더라도 PASS 권한이 없다.
-- remote 검수를 위해 한 화면에서 대화, 후보, 주입 source badge, 선택/코멘트 입력을 볼 수 있게 한다.
-- raw Persona/Memory 내용은 기본 화면에서 숨기고 필요할 때 펼친다. ID, type, score, validity는 표시한다.
+### 11.2 완료된 기반
 
-### 10.4 구조적 합격 조건과 품질 판정
+- [x] **P1-0:** Memory seed/provenance 구현. 합성 무효 기억의 top-K 주입은 기준선 실패로 보존.
+  [결과](reports/character-chat-p1-0-memory-fixture-provenance-2026-09-07.md)
+- [x] **P1-1 구조:** strict ID manifest와 Router 구현. 합성 2인×3턴의 source 배치는 검증됐으나
+  실제 모델 품질·실제 selector·실제 캐릭터 매핑은 미검증.
+  [결과](reports/character-chat-p1-1-persona-router-2026-09-07.md)
 
-자동으로 hard gate할 수 있는 것은 구조적 사실뿐이다.
+### 11.3 다음 최소 단계 — source 조사와 Persona 효과 검증
 
-- neutral/irrelevant case에서 주입 memory 0
-- superseded/forgotten/expired record 주입 0
-- positive recall case에서 expected record가 threshold와 budget을 통과
-- current state source와 expiry가 일치
-- 모든 캐릭터·조건 cell 완주
-- prompt/source provenance 누락 0
+2026-09-07 S1 결과: 활성 캐릭터 4명, 미삭제 Persona 45개와 character memory 79개.
+Persona 원문은 총 16,375자, Memory 원문은 총 4,536자다. legacy greeting 제외 4개,
+실제 stable 후보 41개, 빈 Persona 0개를 집계했다. Memory type은 event 26 / fact 13 /
+goal 7 / preference 16 / relationship 3 / routine 14이며 `auto:` reason은 event 1개뿐이다.
+따라서 `auto:`만으로 사건·과거 lore를 식별하는 가정은 사용하지 않는다. 이후 원문 전수 조사에서
+33개 block의 보수적 route 후보와 혼합 목적 8개·examples 4개 미확정 항목을 기록했다.
+원문 분리 주석은 8개/22구간이며 사용자 승인 후 평가 입력에 적용했다. 원문 그대로 재조립되며
+11개 `always` / 8개 `never_prompt` / 3개 `retrieved`로 배치된다. source 분리와 전체 mapping 완성을
+구분한다. [S1 보고서](reports/character-chat-s1-source-audit-2026-09-07.md)에 근거·한계를 기록했다.
 
-자연스러움 합격은 사용자가 transcript를 보고 결정한다.
+- [x] **S1 / source 조사:** 격리된 활성 snapshot에서 블록별 목적, 혼합 내용, canon과의 중복,
+  greeting의 proactive/reactive 구분을 기록한다. count만 같다고 이전 snapshot과 동일하다고
+  보지 않는다. manifest와 원문은 git 밖에 두며 미분류·충돌 목록을 먼저 검토한다.
+  소유자: `src/persona/postgres-persona-store.ts`, `src/persona/routed-persona-store.ts`.
+  검증 결과: 읽기 전용 count/hash, 45/79 전수 조사 연결, ID 누락·중복, 원문 불변성을 확인했다.
+  조사 당시 미확정 12개 중 혼합 8개는 아래 단계에서 처리했고 examples 4개는 후속 결정으로 남는다.
+  전체 실행용 manifest와 제품 parser 검증은 S2 입력 확정 뒤 수행한다.
+  혼합 블록을 억지로 한 route에 넣은 상태를 완전한 매핑으로 판정하지 않는다.
+- [x] **S1 후속 / 승인된 혼합 원문 분리:** `evals/persona-source-projection.ts`와
+  `eval:persona-projection`으로 8개/22구간을 실험 입력에만 적용했다. 37개 원본 블록과 examples
+  4개·canon 79개는 그대로다. 원문 hash·전체 byte 범위·UTF-8 경계·ID 충돌을 검증하며 기존 Router가
+  배치를 소유한다. 실제 source의 4명 × 3조건과 합성 `ChatService.prepare` 통합 검증을 통과했다.
+  실제 selector·모델 호출은 포함하지 않으며 source snapshot과 출력은 gitignore 경로에만 둔다.
+- [x] **S1 후속 / examples 검토와 국소 비교 입력:** 4개/54문답을 검토했다. examples 유지와
+  미주입을 같은 혼합 분리 입력에서 비교하도록 C 조건을 별도로 준비했다. 원문을 고치거나 좋은
+  문답만 선별하지 않는다. 4명 × 8상황 × 3조건의 준비 96건 통과, 모델/embedding 호출 0회.
+  [검토·입력·실행 경계](reports/character-chat-s1-examples-review-2026-09-07.md)
+- [x] **S2 준비 / 기존 실제 모델 경로 연결:** `eval:persona-comparison`이 pinned Persona/case
+  manifest와 기존 target의 HTTP/provider 경로를 사용한다. fresh target, 고정 clock, 선택 0,
+  Bond/Memory 미추적, 호출 상한과 재시도 0, 응답 우선 저장을 검증했다. 실제 source CLI 합성
+  completion 96건·외부 모델 0회. A↔B/B↔C 패킷은 같은 캐릭터·prefix이며 원문을 유지하고
+  조건만 가린다. 사용자 1인 검수 후 판단하며 기존 2인 agreement 집계로 품질 PASS를 만들지 않는다.
+  DB의 현재 모델 설정과 12회 smoke 비용·입력 계약은 위 보고서에 기록했다.
+- [x] **S2 smoke / 첫 실제 모델 응답:** 인사 1상황 × 4명 × 3조건을 사용자 승인 후 실행했다.
+  12회 모두 정상 종료, prompt/source와 고정 설정 일치, 같은 캐릭터·prefix 검수 8쌍을 확인했다.
+  실제 생성 12회와 청구액 조회 GET 12회를 구분한다. 결과와 제한은 위 보고서에 기록했다.
+  제공사가 5개로 나뉘고 reasoning 보고값도 달라, 모델명 고정만으로 통제된 품질 비교가 되지 않는다.
+- [ ] **S2 / 반복 국소 모델 비교:** S1에서 명확히 분류 가능한 입력으로 10.3의 Legacy / 사전 선택
+  Routed를 같은 모델에서 비교한다. 미분류가 남은 캐릭터는 제한을 표시하고 전체 완료로 세지
+  않는다. 모든 source와 hidden state, 재생 prefix를 고정하며 selector 원리와 진단 한계를 적는다.
+  첫 제한 실험은 준비된 A↔B(혼합 분리), B↔C(examples 노출)로 요인을 구분할 수 있다.
+  A↔C만으로 효과를 합쳐 주장하지 않는다. 이때 전체 mapping과 실제 selector 완성을 선행 조건으로
+  강제하지 않으며, 선택 0의 국소 진단을 필요한 lore 회수 성공이나 전체 Routed A/B로 세지 않는다.
+  소유자: `evals/target.ts`의 기존 실제 모델 경로, 이를 호출하는 `evals/persona-comparison.ts`와
+  `evals/persona-comparison-cli.ts`, 기존 `evals/review.ts`,
+  `src/bootstrap/container.ts`의 Store/selector override. `evals/persona-router-eval.ts`의
+  FakeProvider 결과를 실제 모델 결과로 포장하거나 별도 채팅 엔진을 만들지 않는다.
+  검증: `npm run eval:persona-router`는 구조 회귀만, `npm run test:eval`은 평가 계약 회귀만
+  담당한다. `eval:persona-comparison -- run`으로 첫 12회 smoke를 완료했으며 원문 검수가 남아 있다.
+  자동으로 288회로 확대하지 않는다. 본 비교 전 OpenRouter의 제공사와 reasoning 조건을 고정하고
+  실제 응답 metadata로 확인해 provider 차이를 Persona 효과와 혼동하지 않는다.
+- [ ] **S3 / 실제 선택과 일반화:** S2의 이득이 확인되면 `PersonaBlockSelector` 경계에 공통
+  선택기를 연결한다. 입력의 최신 문장만으로 지시어가 해소되지 않는 경우를 포함해 검증하고,
+  `never_prompt`는 selector에도 전달하지 않는다. 선택 실패·무관 질의는 optional lore 없이
+  진행하되 필요한 회상 실패를 성공으로 세지 않는다. 상세 selector 방식은 S1/S2 증거 뒤 확정한다.
+  소유자: `src/chat/chat-service.ts`, `src/persona/persona-router.ts`, 해당 테스트와 `evals/target.ts`.
+  검증: 해당 source 테스트, `npm run test:eval`, holdout 실제 모델 재생. snapshot·mapping·
+  selector 버전을 동결하고 10.4의 캐릭터별 회귀 여부를 확인한다.
+- [ ] **S4 / 원문 검수:** S2와 S3 각각 결과가 나오는 시점에 사용자가 비교한다. 모든 후속 기능을
+  만든 뒤 한 번에 검수하는 마지막 단계로 미루지 않는다. 기존 `evals/review.ts`의 pair/제출
+  계약을 재사용하되 2인 agreement 집계로 1인 검수를 강제 통과시키지 않는다. 같은 캐릭터의
+  조건 가림과 원문 보존에 필요한 최소 adapter/UI만 다음 구현 계약에 포함한다.
+  검증: `evals/review.test.ts`의 관련 회귀와 실제 artifact의 좌우 가림·동률·양쪽 실패·원문 확인.
 
-- 사용자가 말을 꺼내지 않았는데 날씨·방문 목적·위치·직업·게시물을 먼저 꺼내지 않음
-- 캐릭터성은 biography 설명이 아니라 어휘·반응·의견에서 보임
-- 질문, 자기 노출, 조언이 직전 message와 연결됨
-- 이전 검수에서 지적한 번역투·업무 jargon·상품 설명식 문장이 반복되지 않음
-- 특정 캐릭터만 좋아지고 나머지가 악화되지 않음
+### 11.4 증상에 따라 선택할 후속 실험
 
-## 11. 구현 우선순위
+이 목록은 순서대로 모두 구현할 작업이 아니다. 다음 항목은 S2/S3 결과가 가리키는 원인 하나를
+선택한다. 각각의 실제 모델 재생 전에 관련 단위 테스트와 `npm run test:eval`을 수행한다.
 
-이 작업은 기존 P0-1의 연장이 아니라 **P1 구조 실험**이다.
+| 후보 | 바꿀 한 가지와 소유자 | 검증·진행 조건 |
+| --- | --- | --- |
+| Character lore 선별 | `src/persona/postgres-persona-store.ts` read 결과와 `src/chat/system-prompt.ts`의 canon 경로 | 먼저 DB의 기존 `id/type/reason/created_at/updated_at`을 조사하고 새 schema 필요성을 판단. type 단독으로 route·만료를 확정하지 않음. 중복 source나 과거 사건 문제가 재현되면 같은 원문·핵심 canon을 보존하는 별도 비교. 현재 `canonMemories: string[]`에는 ID 추적된 선별이 없음 |
+| 사용자 Memory 유효성 | `src/memory/retrieval.ts`, Store와 `evals/cases/p1-memory-structure.json` | fixture 상태별 제외/허용 검증. 검색 제외만으로 저장·정정·완전한 망각 구현을 완료 처리하지 않음 |
+| 사용자 Memory 관련성 | 같은 scorer와 `src/chat/chat-service.ts` | 상태 필터를 고정하고 raw relevance/empty를 비교한 뒤, 필요하면 별도로 query 문맥 확장 비교. 미사용 positive/negative case에 threshold를 조정하지 않음 |
+| Context 순서 | `src/openai/messages.ts`와 해당 테스트 | 내용은 고정하고 context/user text 순서만 비교. 짧은 후속 발화, 사용자 text 보존, prompt 안정성과 token·지연도 확인 |
+| 시간·Bond 지침 | `src/chat/turn-context.ts`와 해당 테스트 | 무관 시간 언급 또는 질문·자기 노출 문제가 남을 때 문구 한 요인씩 비교. 관계 정책 변경은 별도 결정 |
+| 현재 상태 | turn context의 격리 fixture | 유효한 사실 공급 효과와 상태 없음/만료 시 절제를 비교. 정본 공급자·갱신·만료 정책을 결정하기 전 DB화하지 않음 |
+| 한국어·대화 행동 | `src/chat/system-prompt.ts`, `evals/target.ts` | 올바른 입력에서도 결함이 남으면 원문 품질·지침·모델을 각각 비교. 새 상태 머신·fine-tuning은 자동 후속 작업이 아님 |
 
-### P1-0 — Memory가 실제로 들어가는 평가 fixture와 provenance
+사용자 Memory와 Persona 결합 효과를 볼 필요가 생기면 기존 2×2를 재사용한다. 이때 Memory는
+`agent_archival_memories` 검색만 의미하며 character canon, Core/Summary와 혼동하지 않는다.
+A=Legacy+기존 검색, B=Routed+기존 검색, C=Legacy+검증된 gate, D=Routed+검증된 gate다.
+네 조건에 같은 사용자 seed와 hidden state를 주며 이후 변경된 기준선을 과거 결과와 섞지 않는다.
 
-> 2026-09-07 구현 완료. 상세 결과는
-> [`P1-0 Memory fixture/provenance 보고서`](reports/character-chat-p1-0-memory-fixture-provenance-2026-09-07.md)에
-> 기록했다. 구조 preflight는 통과했지만 현행 unfiltered top-K가 `superseded`, `forgotten`, `stale`
-> record를 실제로 주입해 lifecycle 정책은 실패했다. 대화 자연스러움은 판정하지 않았다.
+### 11.5 구현·적용 경계와 소유자 확인
 
-- 현행 동작은 그대로 둔다.
-- seed user memory, stale/corrected/forgotten memory, current state fixture를 만든다.
-- turn별 retrieved/injected/excluded source와 이유를 artifact에 기록한다.
-- 이전 48턴처럼 memory가 0인 실행을 memory test라고 부르지 못하게 preflight한다.
+현재 라우팅은 `routePersona`와 strict `RoutedPersonaStore`, 관련성 선택은
+`ChatService.selectPersonaBlocks` 및 `ContainerOverrides.personaBlockSelector`가 기존 경계를
+소유한다. 실제 모델 평가는 `evals/target.ts`→`evaluate.ts`→`cli.ts`, 검수는 `review.ts`를
+확장한다. 심볼 정의와 호출부 두 신호로 확인했으며 모두 `owner-found`다. 새로운 공통 엔진이나
+Context Orchestrator 계층은 필요하지 않다. character lore의 ID 기반 선별처럼 현재 없는 기능은
+해당 slice에서 별도 Existing Owner Check를 거쳐야 한다.
 
-### P1-1 — Persona Router
-
-> 2026-09-07 runtime 구조와 DDL-free read adapter 구현 완료. 두 합성 인물의 동일 3턴
-> Control/Candidate 구조 A/B에서 중립 첫 턴의 불필요 source는 `4→0`, 첫 턴 이후
-> `start_only` 잔류는 `4→0`, `never_prompt` 누출은 `6→0`이었다. 관련 질문에서는
-> `retrieved` lore가 2/2 `turn_context`에 들어갔고 stable prompt hash는 유지됐다.
-> 이 결과는 구조 검증이며 실제 모델 자연스러움은 판정하지 않았다. 실제 캐릭터 매핑과
-> schema 승격은 아직 하지 않았다.
-
-- 현재 DB row를 runtime에서 `always/start_only/retrieved/never_prompt`로 명시적으로 mapping한다.
-- 먼저 test fixture와 read adapter에서 검증하며 DDL 없이 causal effect를 본다.
-- 운영 title 문자열을 영구 계약으로 삼지 않는다. 효과가 확인되면 schema owner에 typed field를 추가한다.
-
-### P1-2 — Memory Retrieval Gate
-
-- query를 최근 2~4턴과 open loop로 확장한다.
-- raw relevance floor와 empty retrieval을 추가한다.
-- status/validity/scope를 ranking 전에 거른다.
-- retrieved와 실제 answer에 used된 memory를 구분한다.
-
-### P1-3 — Current State와 Context 순서
-
-- character current state를 짧고 만료 가능한 read model로 추가한다.
-- current time만 있고 state가 없을 때 특정 활동을 만들지 않는다.
-- dynamic context와 actual user text의 순서 A/B를 한다.
-- Bond의 자기 노출 문구를 “허용”에서 “관련 있을 때만 가능한 선택”으로 좁힌다.
-
-### P1-4 — 사용자 검수
-
-- A/B/C/D를 무작위 순서로 웹 artifact에 표시한다.
-- 자동 PASS 없이 사용자 선택과 코멘트만 최종 판정으로 보존한다.
-- 승인된 승자만 공통 runtime 경로에 적용한다.
-
-### DDL 경계
-
-연구 문서는 DDL을 실행하지 않는다. P1-1의 runtime mapping이 효과를 보인 뒤 필요한 최소 field는
-다음 후보로 좁힌다.
-
-- Persona: `kind`, `injection_policy`, `prompt_channel`, `version`
-- Character lore: `source_type`, `status`, `valid_from`, `valid_to`, `topics`
-- User memory: `status`, `supersedes_id`, `source_turn_ids`, `confidence`, `sensitivity`
-- Current state: 별도 authoritative record와 `expires_at`
-
-실제 table 변경은 schema owner인 service-backend migration과 함께 별도 승인·rollback·backup
-계획으로 수행한다.
+DB schema 승격은 효과가 확인됐다고 자동 실행하지 않는다. 실제 선택 경로·holdout·긴 대화
+검수와 회귀 확인을 거친 뒤 필요한 최소 field만 schema owner `opod-service-backend`에
+제안한다. 정확한 DDL 대상·호환성·rollback을 별도 승인받는다. 적용은 기존 legacy 경로로 되돌릴
+수 있어야 하며, 새 feature flag나 영구 설정 체계를 미리 추가하지 않는다.
 
 ## 12. 채택하지 않을 접근
 
@@ -983,16 +1105,13 @@ Persona와 Memory를 함께 바꾼 결과만 보면 무엇이 좋아졌는지 �
 - LLM judge의 유창성 점수로 사용자의 “뜬금없다” 판정을 덮는 것
 - 한 캐릭터에서 좋아진 prompt를 다른 모든 캐릭터의 정답으로 복사하는 것
 
-## 13. 최종 권고
+## 13. 재검토 결론
 
-OPOD의 다음 개선은 Persona 문구 보강이 아니라 **Context Orchestrator의 입력 계약 변경**이어야 한다.
+입력의 용도·관련성·유효성을 구분하는 방향과 사용자 원문 검수 중심의 평가는 유지한다.
+수정한 부분은 원인 확정의 강도, Persona/canon/사용자 기억의 실험 경계, 실제 selector 검증,
+캐릭터성 손실 방지, 조건 가림, 결과에 따른 중단·분기 기준이다.
 
-가장 작은 유효 slice는 다음 세 가지다.
-
-1. `Persona Router`: DM에 항상 필요한 identity/behavior/voice만 남긴다.
-2. `Memory Gate`: 관련성·유효성 기준을 못 넘으면 0개를 반환한다.
-3. `Current State`: 현재 활동을 과거 canon/post와 분리하고 만료시킨다.
-
-다만 셋을 한 번에 배포하지 않는다. 먼저 P1-0의 실제 memory fixture와 provenance를 만든 뒤,
-Persona-only, Memory-only, combined 조건으로 같은 대화를 재생한다. 이 순서를 지켜야 “어떤 구조가
-사용자가 느낀 뜬금없음과 게시물 의존을 줄였는지” 증명할 수 있다.
+재검토 이후 source 조사·원문 분리·첫 실제 모델 smoke를 완료했다. 다음은 원문 검수와
+제공사/reasoning 조건을 통제한 반복 비교다. 세 구조를 모두 만드는 것은 성공 조건이 아니다. 공통 코드에서 사용자 경험의 개선을
+확인한 변경만 적용 후보로 남긴다. 이 수정은 연구 계획이며 새 제품 정책이나 DDL 승인으로
+승격하지 않는다.

@@ -6,6 +6,10 @@
 - 연구 근거: [`character-chat-architecture-research-2026-09-02.md`](character-chat-architecture-research-2026-09-02.md)
 - 기존 평가 계약: [`long-conversation-eval.md`](long-conversation-eval.md), [`../evals/README.md`](../evals/README.md)
 
+> 2026-09-07: 이 문서는 P0 범위·결정·실행 이력이다. 현재 P1의 원인 가설, 비교 계약과 다음
+> 실행 순서는 [`Persona·Memory 연구 문서`](character-chat-products-persona-memory-research-2026-09-03.md)의
+> 10~11절을 따른다. P0의 빈 사용자 기억 조건을 P1 Memory 검증에 그대로 재사용하지 않는다.
+
 > 2026-09-03 후속 실행 결정: 이번 P0-R1 답변 개선은 사용자가 기존 스모크 원문에 직접 남긴
 > 22개 사후검수 주석만 개선 입력으로 사용한다. 추가 reviewer 모집과 blind calibration은 보류한다.
 > 이 결정은 단일 사용자 검수를 gold로 승격하지 않으며, seed의
