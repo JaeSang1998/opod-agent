@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { readFileSync } from "node:fs";
 import type { Env } from "./env.js";
 import { createLogger, type Logger } from "./logger.js";
 import { OpenAICompatProvider } from "../provider/openai-compat-provider.js";
@@ -24,6 +25,9 @@ import { ConsolidationWorker } from "../memory/consolidation-worker.js";
 import { Reflector } from "../memory/reflection.js";
 import type { RetrievalWeights } from "../memory/retrieval.js";
 import { type AgentTool, buildDefaultTools } from "../tools/index.js";
+import type { PersonaBlockSelector } from "../persona/persona-router.js";
+import { PersonaRoutingManifest, RoutedPersonaStore } from "../persona/routed-persona-store.js";
+import { KeyphrasePersonaBlockSelector } from "../persona/character-recall.js";
 
 export interface Container {
   env: Env;
@@ -50,6 +54,10 @@ export interface ContainerOverrides {
   queue?: JobQueue;
   tools?: AgentTool[];
   log?: Logger;
+  /** Override authored keyphrase recall; unkeyed lore remains closed by default. */
+  personaBlockSelector?: PersonaBlockSelector;
+  /** Fixed clocks are supplied by isolated evaluations; production uses wall time. */
+  clock?: () => Date;
 }
 
 /**
@@ -117,13 +125,18 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
       );
 
   // All built-in persistence becomes durable together when DATABASE_URL exists.
-  const personas =
+  const rawPersonas =
     overrides.personas ??
     (pool
       ? new PostgresPersonaStore(pool)
       : env.DATABASE_URL
         ? new PostgresPersonaStore(trackedPool("persona"))
         : new StubPersonaStore());
+  const personas = env.PERSONA_ROUTING_MANIFEST_PATH
+    ? new RoutedPersonaStore(rawPersonas, PersonaRoutingManifest.parse(
+        JSON.parse(readFileSync(env.PERSONA_ROUTING_MANIFEST_PATH, "utf8")),
+      ))
+    : rawPersonas;
   const memory = overrides.memory ?? (pool ? new PostgresMemoryStore(pool) : new StubMemoryStore());
   const queue = overrides.queue ?? (pool ? new PostgresJobQueue(pool) : new StubJobQueue(log));
 
@@ -153,9 +166,14 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
       weights,
       recencyDecay: env.MEMORY_RECENCY_DECAY,
       summaryTurnThreshold: env.CONSOLIDATION_SUMMARY_TURN_THRESHOLD,
+      minMemoryRelevance: env.MEMORY_MIN_RELEVANCE,
+      integratedContext: env.CHARACTER_CONTEXT_MODE === "integrated",
+      contextMaxBytes: env.CONTEXT_MAX_BYTES,
     },
     log,
     tools,
+    overrides.clock,
+    overrides.personaBlockSelector ?? new KeyphrasePersonaBlockSelector(),
   );
 
   const reflector = new Reflector(provider, memory, {
@@ -164,13 +182,14 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     reflectionsPerQuestion: env.REFLECTIONS_PER_QUESTION,
     retrieveTopK: env.MEMORY_RETRIEVE_TOP_K,
     reflectionImportance: env.REFLECTION_IMPORTANCE,
-    coreCharLimit: env.CORE_MEMORY_CHAR_LIMIT,
+    integratedContext: env.CHARACTER_CONTEXT_MODE === "integrated",
     weights,
     recencyDecay: env.MEMORY_RECENCY_DECAY,
   });
 
   const consolidation = new ConsolidationService(provider, memory, reflector, {
     reflectionThreshold: env.REFLECTION_IMPORTANCE_THRESHOLD,
+    integratedContext: env.CHARACTER_CONTEXT_MODE === "integrated",
   });
 
   // With a durable queue the Agent hosts the consolidation consumer in-process. The caller

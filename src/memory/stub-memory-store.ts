@@ -1,6 +1,7 @@
 import type {
   GrantBondInput,
   MemoryStore,
+  MemoryRetrievalResult,
   NewMemory,
   RetrieveOptions,
   SummarySaveResult,
@@ -15,8 +16,8 @@ import type {
   SessionKey,
   Summary,
 } from "./types.js";
-import { cosineSimilarity } from "./vector.js";
-import { rankByRetrievalScore } from "./retrieval.js";
+import { compatibleMemoryEmbedding, duplicateMemory, lexicalQueryTerms, scoreHybridRetrievalCandidates,
+  scoreRetrievalCandidates, validQueryEmbedding, validateMemoryEmbedding } from "./retrieval.js";
 
 function relKey(k: RelationshipKey): string {
   return JSON.stringify([k.userId, k.characterId]);
@@ -59,16 +60,76 @@ export class StubMemoryStore implements MemoryStore {
     topK: number,
     opts: RetrieveOptions,
   ): Promise<ArchivalMemory[]> {
-    const all = this.memories.get(relKey(key)) ?? [];
-    const ranked = rankByRetrievalScore(all, queryEmbedding, {
+    return (await this.retrieveWithTrace(key, queryEmbedding, topK, opts)).memories;
+  }
+
+  async retrieveWithTrace(
+    key: RelationshipKey,
+    queryEmbedding: number[],
+    topK: number,
+    opts: RetrieveOptions,
+  ): Promise<MemoryRetrievalResult> {
+    const all = (this.memories.get(relKey(key)) ?? []).filter(
+      (memory) => memory.contextInjectionMode !== "always",
+    );
+    const terms = lexicalQueryTerms(opts.hybrid?.queryText ?? "");
+    const rankOptions = {
       weights: opts.weights,
       recencyDecay: opts.recencyDecay,
       topK,
-    });
+      minRelevance: opts.minRelevance,
+    };
+    const candidates = opts.hybrid
+      ? scoreHybridRetrievalCandidates(all, queryEmbedding, { ...rankOptions, ...opts.hybrid })
+      : scoreRetrievalCandidates(all, queryEmbedding, rankOptions);
+    const ranked = candidates
+      .filter((candidate) => candidate.decision === "selected")
+      .map((candidate) => candidate.item);
     // Touch recency of retrieved rows (Generative Agents updates last_accessed).
     const touchedAt = this.now();
     for (const m of ranked) m.lastAccessedAt = touchedAt;
-    return structuredClone(ranked);
+    return {
+      ...(opts.hybrid ? { hybrid: {
+        semanticStatus: !opts.hybrid.embeddingModel || !validQueryEmbedding(queryEmbedding) ? "query_unavailable" as const
+          : all.some(m => compatibleMemoryEmbedding(m, opts.hybrid?.embeddingModel)) ? "used" as const : "no_valid_index" as const,
+        lexicalCandidates: all.filter(m => terms.some(term => m.content.normalize("NFKC").toLowerCase().includes(term))).length,
+        semanticCandidates: validQueryEmbedding(queryEmbedding)
+          ? all.filter(m => compatibleMemoryEmbedding(m, opts.hybrid?.embeddingModel)).length : 0,
+      } } : {}),
+      memories: structuredClone(ranked),
+      candidates: candidates.map((candidate) => ({
+        id: candidate.item.id,
+        kind: candidate.item.kind,
+        rank: candidate.rank,
+        score: candidate.score,
+        rawRelevance: candidate.rawRelevance,
+        decision: candidate.decision,
+        reason: candidate.reason,
+      })),
+    };
+  }
+
+  async alwaysMemories(key: RelationshipKey): Promise<ArchivalMemory[]> {
+    const stored = (this.memories.get(relKey(key)) ?? []).filter(
+      (memory) => memory.contextInjectionMode === "always",
+    );
+    const core = this.cores.get(relKey(key));
+    const compatibility = core
+      ? [
+          {
+            ...core,
+            id: `legacy-core:${relKey(key)}`,
+            kind: "reflection" as const,
+            importance: 10,
+            embedding: [],
+            memoryType: "interpretation" as const,
+            contextInjectionMode: "always" as const,
+            createdAt: core.updatedAt,
+            lastAccessedAt: core.updatedAt,
+          },
+        ]
+      : [];
+    return structuredClone([...compatibility, ...stored]);
   }
 
   async recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]> {
@@ -91,13 +152,15 @@ export class StubMemoryStore implements MemoryStore {
     if (previous) return structuredClone(previous);
 
     const list = this.memories.get(relKey(key)) ?? [];
+    incoming.forEach(validateMemoryEmbedding);
     const stored: ArchivalMemory[] = [];
     const at = this.now();
     for (const mem of incoming) {
       // Similarity dedup: skip Observations too close to an existing item.
-      const dup = list.some((m) => cosineSimilarity(m.embedding ?? [], mem.embedding) > 0.95);
+      const dup = list.some((m) => duplicateMemory(m, mem));
       if (dup) continue;
       const row: ArchivalMemory = {
+        ...structuredClone(mem),
         id: `mem_${++this.seq}`,
         userId: key.userId,
         characterId: key.characterId,

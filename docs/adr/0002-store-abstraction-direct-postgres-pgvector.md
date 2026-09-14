@@ -37,8 +37,15 @@ is exercisable; the Postgres adapter lands once the schema is confirmed.
 
 The persona schema question is settled: there is no separate Agent-side persona
 schema. The Agent reads the OPOD rows as-is — `characters` +
-`character_personas` (ordered free-text blocks) + `character_memories` (canon)
+`character_personas` (ordered free-text blocks) + `character_canon_memories` (canon)
 — via the built-in `PostgresPersonaStore`, wired whenever `DATABASE_URL` is
 set. Blocks are the single source of truth shared with the content pipeline;
 active rows are the serving truth (no publish state). Memory/queue remain on
 stubs until their pgvector adapters land.
+
+## P1 routing addendum (2026-09-07)
+
+`PostgresPersonaStore` remains the raw-content adapter and now also returns each block's stable row ID.
+ADR 0008 adds an optional DDL-free read decorator and a shared prompt router after this boundary. The
+router decides whether a block is stable, turn-scoped, retrieval-gated, or excluded; it does not alter
+the authored content. Without an explicit manifest, the legacy serving behavior is preserved.

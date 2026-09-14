@@ -58,18 +58,29 @@ describe("OpenAiStructuredLlm", () => {
     );
   });
 
-  it("drops JSON mode when an otherwise compatible server rejects response_format", async () => {
+  it("independently drops unsupported temperature and JSON mode", async () => {
     await withFakeOpenAi(
-      [apiError(400, "response_format json_object is unsupported"), completion('{"answer":"portable"}')],
+      [
+        apiError(400, "temperature only supports the default value"),
+        apiError(400, "response_format json_object is unsupported"),
+        completion('{"answer":"portable"}'),
+        completion('{"answer":"cached"}'),
+      ],
       async ({ baseUrl, requests, fetchImpl }) => {
-        const result = await client(baseUrl, 3, fetchImpl).complete({
+        const llm = client(baseUrl, 3, fetchImpl);
+        const result = await llm.complete({
           schema: OutputSchema,
           system: "system",
           user: "user",
+          temperature: 0.35,
         });
+        await llm.complete({ schema: OutputSchema, system: "system", user: "user", temperature: 0 });
 
         expect(result.value.answer).toBe("portable");
-        expect(requests[1]?.response_format).toBeUndefined();
+        expect(requests[1]?.temperature).toBeUndefined();
+        expect(requests[1]?.response_format).toEqual({ type: "json_object" });
+        expect(requests[2]?.response_format).toBeUndefined();
+        expect(requests[3]?.temperature).toBeUndefined();
       },
     );
   });

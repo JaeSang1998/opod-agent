@@ -24,6 +24,10 @@ const EnvSchema = z.object({
 
   // Retrieval (Generative-Agents weighted scoring; docs/adr/0005)
   MEMORY_RETRIEVE_TOP_K: z.coerce.number().int().positive().default(6),
+  CHARACTER_CONTEXT_MODE: z.enum(["legacy", "integrated"]).default("legacy"),
+  CONTEXT_MAX_BYTES: z.coerce.number().int().positive().default(32_000),
+  // Zero rejects non-positive similarity; this is not a calibrated quality threshold.
+  MEMORY_MIN_RELEVANCE: z.coerce.number().min(-1).max(1).default(0),
   MEMORY_RECENCY_DECAY: z.coerce.number().positive().max(1).default(0.99),
   MEMORY_WEIGHT_RECENCY: z.coerce.number().nonnegative().default(1),
   MEMORY_WEIGHT_IMPORTANCE: z.coerce.number().nonnegative().default(1),
@@ -35,7 +39,6 @@ const EnvSchema = z.object({
   REFLECTION_QUESTIONS_PER_PASS: z.coerce.number().int().positive().default(3),
   REFLECTIONS_PER_QUESTION: z.coerce.number().int().positive().default(2),
   REFLECTION_IMPORTANCE: z.coerce.number().int().min(1).max(10).default(7),
-  CORE_MEMORY_CHAR_LIMIT: z.coerce.number().int().positive().default(2000),
   CONSOLIDATION_SUMMARY_TURN_THRESHOLD: z.coerce.number().int().positive().default(8),
 
   // Server-side tools (get_time, get_weather, and — with a key — web_search). The
@@ -55,6 +58,8 @@ const EnvSchema = z.object({
   MEMORY_WORKER_RETRY_DELAY_MS: z.coerce.number().int().positive().default(30_000),
 
   DATABASE_URL: z.string().optional(),
+  /** Optional versioned, source-pinned read-model mapping; no DB migration. */
+  PERSONA_ROUTING_MANIFEST_PATH: z.string().min(1).optional(),
   OPOD_ADAPTER_MODULE: z.string().min(1).optional(),
   OPOD_WORKER_TOKEN: z.string().min(16).optional(),
 }).superRefine((env, ctx) => {

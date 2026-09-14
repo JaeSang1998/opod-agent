@@ -377,12 +377,40 @@ describe("POST /v1/chat/completions tool-loop debug channel (x-opod-debug)", () 
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion & {
-      opod_debug?: { events: { type: string; tool?: string }[] };
+      opod_debug?: {
+        events: { type: string; tool?: string }[];
+        prompt?: { stablePromptSha256: string };
+      };
     };
     expect(json.choices[0]?.message?.content).toBe("It's midnight among the stars.");
     expect(json.opod_debug?.events).toHaveLength(2);
     expect(json.opod_debug?.events[0]).toMatchObject({ type: "tool_call", tool: "get_time" });
     expect(json.opod_debug?.events[1]).toMatchObject({ type: "tool_result", tool: "get_time" });
+    expect(json.opod_debug?.prompt?.stablePromptSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("returns content-free prompt metadata without tools and keeps reply content unchanged", async () => {
+    const provider = new ScriptedProvider([textTurn("Just the same reply.")]);
+    const { app } = buildApp(provider, []);
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: DEBUG,
+      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }] }),
+    });
+
+    const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion & {
+      opod_debug?: {
+        events: unknown[];
+        prompt: { stablePromptSha256: string; personaBlockCount: number; canonCount: number };
+      };
+    };
+    expect(json.choices[0]?.message?.content).toBe("Just the same reply.");
+    expect(json.opod_debug?.events).toEqual([]);
+    expect(json.opod_debug?.prompt).toMatchObject({ personaBlockCount: 5, canonCount: 1 });
+    expect(json.opod_debug?.prompt.stablePromptSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(json.opod_debug)).not.toContain("Luna");
+    expect(JSON.stringify(json.opod_debug)).not.toContain("observatory");
   });
 
   it("without the header, the non-streaming body has no opod_debug key", async () => {

@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
 import pg from "pg";
+import { afterAll, describe, expect, it } from "vitest";
+import { noopLogger } from "../bootstrap/logger.js";
+import type { ConsolidationRequest } from "../protocol/index.js";
+import { FakeProvider } from "../testing/fake-provider.js";
+import { ConsolidationService } from "./consolidation.js";
 import { ConsolidationWorker } from "./consolidation-worker.js";
 import { PostgresJobQueue } from "./postgres-job-queue.js";
-import type { ConsolidationRequest } from "../protocol/index.js";
-import { noopLogger } from "../bootstrap/logger.js";
+import { PostgresMemoryStore } from "./postgres-memory-store.js";
+import { Reflector } from "./reflection.js";
 
 /** Integration tests against the real queue table; see postgres-memory-store.test.ts. */
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -39,7 +43,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
 
   afterAll(async () => {
     if (createdKeys.length > 0) {
-      await pool.query(`DELETE FROM opod.agent_memory_jobs WHERE idempotency_key = ANY($1)`, [
+      await pool.query(`DELETE FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = ANY($1)`, [
         createdKeys,
       ]);
     }
@@ -48,8 +52,10 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
 
   async function statusOf(idempotencyKey: string) {
     const rows = await pool.query(
-      `SELECT status, attempt_count, error_message, payload_json
-       FROM opod.agent_memory_jobs WHERE idempotency_key = $1`,
+      `SELECT processing_status AS status, attempt_count,
+              last_error_message AS error_message,
+              consolidation_request AS payload_json
+       FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = $1`,
       [idempotencyKey],
     );
     return rows.rows[0];
@@ -76,6 +82,42 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     expect(final.payload_json).toEqual({});
   });
 
+  it("keeps overlapping source ranges through persisted jobs and real summary writes", async () => {
+    const provider = new FakeProvider("ack", "[]");
+    const memory = new PostgresMemoryStore(pool);
+    const reflector = new Reflector(provider, memory, {
+      recentN: 20, questionsPerPass: 1, reflectionsPerQuestion: 1, retrieveTopK: 5,
+      reflectionImportance: 7, coreCharLimit: 2000, weights: { recency: 1, importance: 1, relevance: 1 }, recencyDecay: 0.99,
+    });
+    const service = new ConsolidationService(provider, memory, reflector, { reflectionThreshold: 1000 });
+    const base = request();
+    const turns: ConsolidationRequest["turns"] = [
+      { role: "user", content: "First exchange." }, { role: "assistant", content: "First reply." },
+      { role: "user", content: "Second exchange." }, { role: "assistant", content: "Second reply." },
+    ];
+    const jobs = [2, 4].map((end) => track({
+      ...base, idempotencyKey: `${base.idempotencyKey}-${end}`, turns: turns.slice(0, end), turnsStartOffset: 0, refreshSummary: true,
+    }));
+    try {
+      for (const [index, job] of jobs.entries()) {
+        await queue.enqueueMemoryUpdate(job);
+        await pool.query("UPDATE opod.chat_memory_consolidation_jobs SET created_at = now() - make_interval(secs => $2) WHERE idempotency_key = $1", [job.idempotencyKey, 30 - index]);
+        expect((await statusOf(job.idempotencyKey)).payload_json.turnsStartOffset).toBe(0);
+      }
+      await new ConsolidationWorker(pool, service, CONFIG, noopLogger).drain();
+      expect(await memory.getSummary(base)).toMatchObject({ turnsCovered: 4, revision: 2 });
+      for (const job of jobs) expect(await statusOf(job.idempotencyKey)).toMatchObject({ status: "completed", payload_json: {} });
+      const summaries = provider.chatCalls.filter((call) => String(call.messages[0]?.content).includes("running summary"));
+      expect(summaries).toHaveLength(2);
+      const latestInput = String(summaries[1]!.messages[1]!.content).split("New turns:\n")[1];
+      expect(latestInput).toContain("Second exchange.");
+      expect(latestInput).not.toContain("First exchange.");
+    } finally {
+      await pool.query("DELETE FROM opod.chat_memory_session_summaries WHERE user_id = $1 AND character_id = $2 AND session_id = $3", [base.userId, base.characterId, base.sessionId]);
+      await pool.query("DELETE FROM opod.chat_applied_state_changes WHERE user_id = $1 AND character_id = $2", [base.userId, base.characterId]);
+    }
+  });
+
   it("requeues a failed job and fails it permanently at max attempts", async () => {
     const job = track(request());
     await queue.enqueueMemoryUpdate(job);
@@ -96,7 +138,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
 
     // Simulate the backoff elapsing, then the next attempt exhausts the budget.
     await pool.query(
-      `UPDATE opod.agent_memory_jobs SET lease_expires_at = NULL WHERE idempotency_key = $1`,
+      `UPDATE opod.chat_memory_consolidation_jobs SET processing_lease_expires_at = NULL WHERE idempotency_key = $1`,
       [job.idempotencyKey],
     );
     await worker.drain();
@@ -119,7 +161,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     // Deterministic claim order: A oldest, then B, then the other relationship.
     for (const [index, job] of [jobA, jobB, jobOther].entries()) {
       await pool.query(
-        `UPDATE opod.agent_memory_jobs
+        `UPDATE opod.chat_memory_consolidation_jobs
          SET created_at = now() - make_interval(secs => $2) WHERE idempotency_key = $1`,
         [job.idempotencyKey, 30 - index],
       );
@@ -178,7 +220,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     await run1;
     expect(await statusOf(jobA.idempotencyKey)).toMatchObject({ status: "completed" });
     await pool.query(
-      `UPDATE opod.agent_memory_jobs SET lease_expires_at = NULL WHERE idempotency_key = $1`,
+      `UPDATE opod.chat_memory_consolidation_jobs SET processing_lease_expires_at = NULL WHERE idempotency_key = $1`,
       [jobB.idempotencyKey],
     );
     await worker2.drain();
@@ -193,7 +235,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     for (const [index, job] of jobs.entries()) {
       await queue.enqueueMemoryUpdate(job);
       await pool.query(
-        `UPDATE opod.agent_memory_jobs
+        `UPDATE opod.chat_memory_consolidation_jobs
          SET created_at = now() - make_interval(secs => $2) WHERE idempotency_key = $1`,
         [job.idempotencyKey, 30 - index],
       );
@@ -233,7 +275,7 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     expect((await statusOf(third.idempotencyKey)).status).toBe("queued");
 
     // Remove the still-queued backlog so later tests' drain() cannot claim it.
-    await pool.query(`DELETE FROM opod.agent_memory_jobs WHERE idempotency_key = ANY($1)`, [
+    await pool.query(`DELETE FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = ANY($1)`, [
       [second.idempotencyKey, third.idempotencyKey],
     ]);
   });
@@ -242,8 +284,8 @@ describe.skipIf(!databaseUrl)("ConsolidationWorker (integration)", () => {
     const key = `it-${randomUUID()}`;
     createdKeys.push(key);
     await pool.query(
-      `INSERT INTO opod.agent_memory_jobs
-         (id, idempotency_key, user_id, character_id, payload_json, updated_at)
+      `INSERT INTO opod.chat_memory_consolidation_jobs
+         (id, idempotency_key, user_id, character_id, consolidation_request, updated_at)
        VALUES ($1, $2, 'it-user', 'it-char', '{"not": "a request"}', now())`,
       [randomUUID(), key],
     );

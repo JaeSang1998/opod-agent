@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
-import { PostgresMemoryStore } from "./postgres-memory-store.js";
-import { PostgresJobQueue } from "./postgres-job-queue.js";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { NewMemory, RetrieveOptions } from "./memory-store.js";
+import { PostgresJobQueue } from "./postgres-job-queue.js";
+import { PostgresMemoryStore } from "./postgres-memory-store.js";
 import type { RelationshipKey } from "./types.js";
 
 /**
- * Integration tests against a real Postgres with the opod.agent_* tables
- * (service-backend migration `agent_relationship_memory`). Gated by
+ * Integration tests against the real PostgreSQL chat-memory tables.
+ * Gated by
  * TEST_DATABASE_URL so environments without the schema skip cleanly:
  *
  *   TEST_DATABASE_URL=postgresql://ai_sns:ai_sns@localhost:5433/ai_sns npm test
@@ -30,6 +30,27 @@ function newMemory(overrides: Partial<NewMemory> = {}): NewMemory {
   };
 }
 
+describe("PostgresMemoryStore hybrid failure trace", () => {
+  it("retains lexical matches and labels a failed semantic query without reusing semantic scores", async () => {
+    const content = "제주 여행";
+    const query = vi.fn().mockResolvedValueOnce({ rows: [{
+      id: randomUUID(), user_id: "u", character_id: "c", memory_text: content,
+      derivation_type: "observation", importance_score: 5,
+      memory_embedding: Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0),
+      embedding_model: "synthetic-test", embedded_text_sha256: createHash("sha256").update(content).digest("hex"),
+      supporting_memory_ids: null, context_injection_mode: "retrieved",
+      created_at: new Date(), last_recalled_at: new Date(),
+    }] }).mockRejectedValueOnce(new Error("semantic unavailable")).mockResolvedValueOnce({ rows: [] });
+    const store = new PostgresMemoryStore({ query } as unknown as pg.Pool);
+    const result = await store.retrieveWithTrace({ userId: "u", characterId: "c" },
+      Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0), 4,
+      { ...RETRIEVE_OPTS, hybrid: { queryText: "제주", embeddingModel: "synthetic-test" } });
+    expect(result.memories.map(m => m.content)).toEqual([content]);
+    expect(result.hybrid?.semanticStatus).toBe("failed");
+    expect(result.candidates[0]?.rawRelevance).toBe(0);
+  });
+});
+
 describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
   const pool = databaseUrl ? new pg.Pool({ connectionString: databaseUrl }) : null!;
   const store = databaseUrl ? new PostgresMemoryStore(pool) : null!;
@@ -45,23 +66,22 @@ describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
   }
 
   beforeAll(async () => {
-    await pool.query("SELECT 1 FROM opod.agent_archival_memories LIMIT 0");
+    await pool.query("SELECT 1 FROM opod.chat_memory_entries LIMIT 0");
   });
 
   afterAll(async () => {
     if (createdUsers.length > 0) {
       for (const table of [
-        "agent_archival_memories",
-        "agent_core_memories",
-        "agent_relationship_state",
-        "agent_summaries",
-        "agent_memory_operations",
+        "chat_memory_entries",
+        "chat_relationship_states",
+        "chat_memory_session_summaries",
+        "chat_applied_state_changes",
       ]) {
         await pool.query(`DELETE FROM opod.${table} WHERE user_id = ANY($1)`, [createdUsers]);
       }
     }
     if (createdJobKeys.length > 0) {
-      await pool.query(`DELETE FROM opod.agent_memory_jobs WHERE idempotency_key = ANY($1)`, [
+      await pool.query(`DELETE FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = ANY($1)`, [
         createdJobKeys,
       ]);
     }
@@ -86,10 +106,65 @@ describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
     expect(retried.map((m) => m.content)).toEqual(first.map((m) => m.content));
 
     const count = await pool.query(
-      "SELECT count(*)::int AS n FROM opod.agent_archival_memories WHERE user_id = $1",
+      "SELECT count(*)::int AS n FROM opod.chat_memory_entries WHERE user_id = $1",
       [key.userId],
     );
     expect(count.rows[0].n).toBe(2);
+  });
+
+  it("retrieves old scoped lexical and semantic matches beyond 512 newer memories", async () => {
+    const key = freshKey();
+    const vector = Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0);
+    const content = "오래된 약속";
+    const [semantic] = await store.upsertMany(key, [newMemory({ content, embedding: vector,
+      embeddingModel: "synthetic-test", embeddingSourceSha256: createHash("sha256").update(content).digest("hex") })]);
+    await store.upsertMany(key, [newMemory({ content: "제주 여행", embedding: [] })]);
+    await store.upsertMany(key, Array.from({ length: 520 }, (_, i) => newMemory({ content: `무관 ${i}`, embedding: [] })));
+    await store.upsertMany(freshKey(), [newMemory({ content: "제주 다른 사용자", embedding: [] })]);
+    await store.upsertMany({ ...key, characterId: "different-character" }, [newMemory({ content: "제주 다른 캐릭터", embedding: [] })]);
+    const result = await store.retrieveWithTrace(key, vector, 6, {
+      ...RETRIEVE_OPTS, hybrid: { queryText: "제주", embeddingModel: "synthetic-test" },
+    });
+    expect(result.memories.map(m => m.content).sort()).toEqual(["오래된 약속", "제주 여행"].sort());
+    expect(result.hybrid?.semanticStatus).toBe("used");
+
+    await pool.query("UPDATE opod.chat_memory_entries SET memory_text = '변경된 원문' WHERE id = $1", [semantic!.id]);
+    const stale = await store.retrieveWithTrace(key, vector, 6, {
+      ...RETRIEVE_OPTS, hybrid: { queryText: "제주", embeddingModel: "synthetic-test" },
+    });
+    expect(stale.memories.map(m => m.content)).toEqual(["제주 여행"]);
+    expect(stale.hybrid?.semanticStatus).toBe("no_valid_index");
+  });
+
+  it("round-trips source metadata and preserves unknown legacy metadata", async () => {
+    const key = freshKey();
+    const sourceMessages = [{ role: "user" as const, content: "난 차 좋아해", position: 8,
+      sha256: createHash("sha256").update("난 차 좋아해").digest("hex") }];
+    const metadata = { sourceMessages, sourceSessionId: "synthetic-session", memoryType: "user_fact" as const };
+    const first = await store.upsertMany(key, [newMemory({ ...metadata, embedding: [] })], "grounded-turn");
+    expect((await store.recentObservations(key, 1))[0]).toMatchObject(metadata);
+    expect(first[0]?.occurredAt).toBeUndefined();
+    expect(await store.upsertMany(key, [newMemory({ content: "retry changes", embedding: [] })], "grounded-turn")).toEqual(first);
+    const legacy = await store.upsertMany(key, [newMemory({ content: "legacy", embedding: [] })]);
+    expect(legacy[0]?.sourceMessages).toBeUndefined();
+    expect(legacy[0]?.embeddingModel).toBeUndefined();
+  });
+
+  it("gates malformed legacy arrays before pgvector casts instead of failing the semantic branch", async () => {
+    const key = freshKey();
+    const vector = Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0);
+    for (const [i, embedding] of [[1, 0], vector.map(() => NaN), vector.map(() => Infinity), vector.map(() => 0)].entries()) {
+      const content = `잘못된 벡터 ${i}`;
+      await pool.query(`INSERT INTO opod.chat_memory_entries
+        (id, user_id, character_id, memory_text, derivation_type, importance_score, memory_embedding, embedding_model, embedded_text_sha256)
+        VALUES ($1,$2,$3,$4,'observation',5,$5,'synthetic-test',$6)`,
+      [randomUUID(), key.userId, key.characterId, content, embedding, createHash("sha256").update(content).digest("hex")]);
+    }
+    const result = await store.retrieveWithTrace(key, vector, 4, {
+      ...RETRIEVE_OPTS, hybrid: { queryText: "없는 단어", embeddingModel: "synthetic-test" },
+    });
+    expect(result.memories).toEqual([]);
+    expect(result.hybrid?.semanticStatus).toBe("no_valid_index");
   });
 
   it("drops near-duplicate observations (similarity dedup)", async () => {
@@ -117,8 +192,8 @@ describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
     expect(hits.map((m) => m.content)).toEqual(["about film"]);
 
     const touched = await pool.query<{ content: string; moved: boolean }>(
-      `SELECT content, last_accessed_at > created_at AS moved
-       FROM opod.agent_archival_memories WHERE user_id = $1`,
+      `SELECT memory_text AS content, last_recalled_at > created_at AS moved
+       FROM opod.chat_memory_entries WHERE user_id = $1`,
       [key.userId],
     );
     const byContent = new Map(touched.rows.map((r) => [r.content, r.moved]));
@@ -241,15 +316,15 @@ describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
     await queue.enqueueMemoryUpdate(job);
 
     const rows = await pool.query(
-      "SELECT payload_json FROM opod.agent_memory_jobs WHERE idempotency_key = $1",
+      "SELECT consolidation_request FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = $1",
       [job.idempotencyKey],
     );
     expect(rows.rows).toHaveLength(1);
-    expect(rows.rows[0].payload_json.userId).toBe(job.userId);
+    expect(rows.rows[0].consolidation_request.userId).toBe(job.userId);
 
     // Delete the queued row right away: the worker suite runs in parallel and
     // its drain() would otherwise claim this job (shared queue table).
-    await pool.query("DELETE FROM opod.agent_memory_jobs WHERE idempotency_key = $1", [
+    await pool.query("DELETE FROM opod.chat_memory_consolidation_jobs WHERE idempotency_key = $1", [
       job.idempotencyKey,
     ]);
   });

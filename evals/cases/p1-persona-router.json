@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "mode": "structure",
+  "personas": [
+    {
+      "key": "fixture-north",
+      "id": "persona-router-fixture-north",
+      "name": "테스트 인물 A",
+      "bio": "공용 Persona Router의 구조만 확인하는 합성 인물이다.",
+      "blocks": [
+        { "id": "north-identity", "title": "Core", "content": "차분하지만 자기 의견은 분명하게 말한다." },
+        { "id": "north-voice", "title": "Typing", "content": "짧고 건조한 문장에 가벼운 유머를 섞는다." },
+        { "id": "north-intro", "title": "Arrival", "content": "처음에는 아는 척하지 않고 조금 거리를 둔다." },
+        { "id": "north-lore", "title": "Background", "content": "오래된 라디오를 고치는 취미가 있다." },
+        { "id": "north-note", "title": "Production", "content": "피드 이미지는 호박색 계열로 제작한다." }
+      ],
+      "routing": {
+        "manifest": {
+          "schemaVersion": 1,
+          "mappingMode": "explicit_block_id",
+          "blocks": [
+            { "blockId": "north-identity", "kind": "identity", "injection": "always" },
+            { "blockId": "north-voice", "kind": "voice", "injection": "always" },
+            { "blockId": "north-intro", "kind": "example", "injection": "start_only" },
+            { "blockId": "north-lore", "kind": "lore", "injection": "retrieved" },
+            { "blockId": "north-note", "kind": "creator_note", "injection": "never_prompt" }
+          ]
+        },
+        "retrievalRules": [
+          { "blockId": "north-lore", "whenUserContains": ["취미"] }
+        ]
+      },
+      "turns": [
+        { "turn": 1, "message": "안녕" },
+        { "turn": 2, "message": "요즘 취미 얘기해줘" },
+        { "turn": 3, "message": "그 얘기는 됐고 오늘 점심 뭐 먹을까" }
+      ],
+      "expectations": {
+        "control": [
+          { "turn": 1, "systemPrompt": ["north-identity", "north-voice", "north-intro", "north-lore", "north-note"], "turnContext": [], "excluded": [] },
+          { "turn": 2, "systemPrompt": ["north-identity", "north-voice", "north-intro", "north-lore", "north-note"], "turnContext": [], "excluded": [] },
+          { "turn": 3, "systemPrompt": ["north-identity", "north-voice", "north-intro", "north-lore", "north-note"], "turnContext": [], "excluded": [] }
+        ],
+        "candidate": [
+          { "turn": 1, "systemPrompt": ["north-identity", "north-voice"], "turnContext": ["north-intro"], "excluded": ["north-lore", "north-note"] },
+          { "turn": 2, "systemPrompt": ["north-identity", "north-voice"], "turnContext": ["north-lore"], "excluded": ["north-intro", "north-note"] },
+          { "turn": 3, "systemPrompt": ["north-identity", "north-voice"], "turnContext": [], "excluded": ["north-intro", "north-lore", "north-note"] }
+        ]
+      }
+    },
+    {
+      "key": "fixture-south",
+      "id": "persona-router-fixture-south",
+      "name": "테스트 인물 B",
+      "bio": "서로 다른 내용에도 같은 라우팅 규칙이 적용되는지 확인하는 합성 인물이다.",
+      "blocks": [
+        { "id": "south-identity", "title": "기질", "content": "다정하지만 상대의 감정을 대신 단정하지 않는다." },
+        { "id": "south-voice", "title": "문장 리듬", "content": "편한 어휘를 쓰고 질문을 연달아 던지지 않는다." },
+        { "id": "south-intro", "title": "처음 만났을 때", "content": "첫 대화에서는 공통의 과거가 있는 것처럼 굴지 않는다." },
+        { "id": "south-lore", "title": "개인 배경", "content": "작은 화분에 허브를 키우는 취미가 있다." },
+        { "id": "south-note", "title": "콘텐츠 제작 메모", "content": "게시물 사진에는 초록색 소품을 배치한다." }
+      ],
+      "routing": {
+        "manifest": {
+          "schemaVersion": 1,
+          "mappingMode": "explicit_block_id",
+          "blocks": [
+            { "blockId": "south-identity", "kind": "behavior", "injection": "always" },
+            { "blockId": "south-voice", "kind": "voice", "injection": "always" },
+            { "blockId": "south-intro", "kind": "example", "injection": "start_only" },
+            { "blockId": "south-lore", "kind": "lore", "injection": "retrieved" },
+            { "blockId": "south-note", "kind": "creator_note", "injection": "never_prompt" }
+          ]
+        },
+        "retrievalRules": [
+          { "blockId": "south-lore", "whenUserContains": ["취미"] }
+        ]
+      },
+      "turns": [
+        { "turn": 1, "message": "안녕" },
+        { "turn": 2, "message": "요즘 취미 얘기해줘" },
+        { "turn": 3, "message": "그 얘기는 됐고 오늘 점심 뭐 먹을까" }
+      ],
+      "expectations": {
+        "control": [
+          { "turn": 1, "systemPrompt": ["south-identity", "south-voice", "south-intro", "south-lore", "south-note"], "turnContext": [], "excluded": [] },
+          { "turn": 2, "systemPrompt": ["south-identity", "south-voice", "south-intro", "south-lore", "south-note"], "turnContext": [], "excluded": [] },
+          { "turn": 3, "systemPrompt": ["south-identity", "south-voice", "south-intro", "south-lore", "south-note"], "turnContext": [], "excluded": [] }
+        ],
+        "candidate": [
+          { "turn": 1, "systemPrompt": ["south-identity", "south-voice"], "turnContext": ["south-intro"], "excluded": ["south-lore", "south-note"] },
+          { "turn": 2, "systemPrompt": ["south-identity", "south-voice"], "turnContext": ["south-lore"], "excluded": ["south-intro", "south-note"] },
+          { "turn": 3, "systemPrompt": ["south-identity", "south-voice"], "turnContext": [], "excluded": ["south-intro", "south-lore", "south-note"] }
+        ]
+      }
+    }
+  ]
+}

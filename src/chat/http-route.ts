@@ -176,9 +176,12 @@ export function chatRoute(container: Container): Hono {
         : { text: raw, grade: null };
       await prepared.postTurn(assistant, grade);
       const body = assistant === raw ? res : withMessageContent(res, assistant);
-      // Only when the client opted in AND the loop ran do we attach the debug field;
-      // otherwise the body is exactly the completion as before.
-      return debug && prepared.tools ? c.json({ ...body, opod_debug: { events } }) : c.json(body);
+      // The opt-in debug field is content-free: tool activity plus prompt
+      // provenance, never Persona/Memory text. Without the header the body stays
+      // exactly the completion as before.
+      return debug && prepared.promptDebug
+        ? c.json({ ...body, opod_debug: { events, prompt: prepared.promptDebug } })
+        : c.json(body);
     } catch (err) {
       const failure = classifyRequestError(err);
       container.log.error("chat error", { err: String(err), requestId: ctx.requestId });

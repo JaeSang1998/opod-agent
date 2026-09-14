@@ -2,7 +2,7 @@ import type { LLMProvider, ProviderCallOptions } from "../provider/llm-provider.
 
 /**
  * Ask the provider's default model a single system+user prompt and return the
- * reply text (empty string if the model returns none). The sleep-time passes —
+ * successfully completed reply text. The sleep-time passes —
  * extraction, reflection, summary — are all this exact shape, so they share this
  * instead of repeating the request/extract dance.
  */
@@ -22,5 +22,16 @@ export async function completeText(
     },
     options,
   );
-  return res.choices[0]?.message?.content ?? "";
+  const choice = res.choices?.[0];
+  const message = choice?.message;
+  if (
+    choice?.finish_reason !== "stop" ||
+    typeof message?.content !== "string" ||
+    message.refusal ||
+    message.tool_calls?.length ||
+    message.function_call
+  ) {
+    throw new Error("Invalid memory completion response");
+  }
+  return message.content;
 }

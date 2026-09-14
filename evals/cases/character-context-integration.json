@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "mode": "structure",
+  "standard": { "minimumPassRate": 0, "minimumMeanScore": 0, "minimumP10Score": 0, "maximumScenarioScoreRange": 1 },
+  "scenarios": [{
+    "schemaVersion": 1,
+    "id": "integrated-grounded-context",
+    "title": "통합 문맥 구조 합성 회귀",
+    "description": "자연스러움 PASS가 아닌 검색·격리·과거 사건 구분·원문 보존·근거 저장 검증용 합성 자료. DB 통합 테스트는 첫 두 사용자 발화와 고정 assistant 발화를 사용한다. 전체 12턴 실제 모델 평가는 실행하지 않았다.",
+    "language": "ko",
+    "estimatedMinutes": 1,
+    "targetTurns": 12,
+    "historyWindowMessages": 24,
+    "user": {
+      "identity": "통합 테스트 합성 사용자",
+      "backstory": "부산 여행 준비를 하며 이전에 언급한 카페를 떠올린다.",
+      "textingStyle": "짧은 한국어",
+      "goals": ["관련 기억만 회수하고 현재 발화의 근거를 보존한다"],
+      "constraints": ["실제 사용자 자료나 미래 발화의 답을 기억에 미리 저장하지 않는다"]
+    },
+    "phases": [{ "fromTurn": 1, "toTurn": 12, "name": "context-and-writeback", "simulatorInstruction": "고정 합성 발화를 사용한다. 품질 판정은 하지 않는다." }],
+    "scriptedTurns": [
+      { "turn": 1, "message": "나는 부산 여행 준비 중이야.", "purpose": "새로운 사용자 사실과 검색 주제" },
+      { "turn": 2, "message": "그거 기억해 줘.", "purpose": "직전 원문을 유지한 지시 대상 해결" },
+      { "turn": 3, "message": "카페 이름은 뭐였지?", "purpose": "저장된 카페 회수" },
+      { "turn": 4, "message": "응, 그곳이었어.", "purpose": "후속 짧은 발화" },
+      { "turn": 5, "message": "여행 얘기는 됐고, 잠깐 쉬자.", "purpose": "주제 전환 후 불필요 기억 제외" },
+      { "turn": 6, "message": "오늘은 별일 없었어.", "purpose": "새 사건을 발명하지 않음" },
+      { "turn": 7, "message": "넌 조용히 있는 것도 좋아해?", "purpose": "성격에 따른 반응의 후속 검수용" },
+      { "turn": 8, "message": "나도 가끔 그래.", "purpose": "직전 질문에 답하는 문맥" },
+      { "turn": 9, "message": "이제 저녁 먹으려고.", "purpose": "현재 사용자의 발화 구분" },
+      { "turn": 10, "message": "간단하게 먹을 거야.", "purpose": "일상 문맥 유지" },
+      { "turn": 11, "message": "다음에 또 얘기하자.", "purpose": "종료 의도" },
+      { "turn": 12, "message": "잘 쉬어.", "purpose": "종료 인사" }
+    ],
+    "memoryFixture": {
+      "schemaVersion": 1,
+      "seedPolicy": "baseline_unfiltered",
+      "asOf": "2026-09-11T06:00:00Z",
+      "records": [
+        { "id": "relevant-cafe", "content": "부산 카페 이름은 모래별이다.", "kind": "observation", "importance": 4, "lifecycle": "active" },
+        { "id": "unrelated-hobby", "content": "바둑 동호회 암호는 검은돌이다.", "kind": "observation", "importance": 9, "lifecycle": "active" }
+      ],
+      "probes": [{ "turn": 1, "description": "부산 관련 사실만 선택", "expectedInjectedAny": ["relevant-cafe"], "expectedExcluded": ["unrelated-hobby"] }]
+    },
+    "judgeCriteria": [{ "id": "context_grounding", "description": "후속 실제 답변 검수용이며 이 합성 구조 실행에서 LLM 판정을 생성하지 않는다.", "weight": 1, "minimum": 3 }]
+  }]
+}

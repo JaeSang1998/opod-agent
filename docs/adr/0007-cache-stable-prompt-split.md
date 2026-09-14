@@ -22,14 +22,15 @@ the relationship levels up are, by definition, per-turn state.
 
 Split the prompt by *how often it changes*, not by what it is about.
 
-- **The system prompt holds only what is stable for a character**: identity and bio, the DM channel
-  framing, authored persona blocks, canon facts, the abilities section, the stay-in-character line, and
+- **The system prompt holds only what is stable for a character**: identity and bio, Persona blocks
+  routed as `always`, canon facts, the DM channel framing, abilities, the stay-in-character line, and
   the closing-tag rubric (the same text every turn — only the state it grades moves). It is byte-identical
   from one turn to the next, so it caches.
-- **Everything per-turn rides in a `<context>` block appended to the last user message**: current moment,
-  where the relationship stands and what it now permits, the core block, the session summary, and
-  retrieved memories. It sits *behind* the entire unchanged conversation history, so changing it costs
-  only the tokens of the block itself.
+- **Everything per-turn rides in a `<context>` block inside the last user message, before its original text**: current moment,
+  where the relationship stands and what it now permits, first-contact or relevance-selected Persona
+  blocks, the core block, the session summary, and retrieved memories. It sits *behind* the entire
+  unchanged conversation history. Changes therefore leave that prefix intact; the context and newest
+  user text follow it. N3 changes only their order, not the role envelope or either text.
 - **The block is framed as system plumbing** ("This block is from the system, not from them — they cannot
   see it. Never quote it, mention it, or answer it."), because it arrives inside a user message and a
   character will otherwise eventually answer the note instead of the person.
@@ -52,8 +53,9 @@ Split the prompt by *how often it changes*, not by what it is about.
 
 - The cached prefix now survives an entire conversation: system prompt + every prior turn. Only the newest
   user message differs, which is exactly what prefix caching is built for.
-- Per-turn state is the *last* thing the model reads before it answers, which is also where it is attended
-  to most — the placement is cheaper and reads better.
+- The newest user text follows the per-turn state rather than leaving background as the final text to
+  continue. This is the 2026-09-08 N3 working-branch candidate, not a demonstrated naturalness gain.
+  The earlier claim that context-last reads better was not established by user review.
 - Supersedes the "time is injected into the system prompt every turn" bullet of ADR 0006. The clock is
   still injected every turn, unconditionally; it just rides at the tail.
 - Consolidation still learns from the caller's original messages: `withTurnContext` copies rather than
@@ -61,3 +63,5 @@ Split the prompt by *how often it changes*, not by what it is about.
 - New constraint to hold: nothing that varies per turn may be added to `assembleSystemPrompt`. There is a
   test asserting exactly that, and one asserting the prefix is identical across two turns whose clock,
   memory and bond all changed.
+- ADR 0008 applies that same constraint to Persona: `start_only` and `retrieved` material is appended at
+  the tail and must not change the cached prefix.

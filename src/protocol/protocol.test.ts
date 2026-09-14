@@ -52,4 +52,18 @@ describe("Agent protocol", () => {
       userId: "x-opod-user-id",
     });
   });
+
+  it("preserves positioned job ranges through JSON while rejecting unsafe or non-conversation coordinates", () => {
+    const base = {
+      characterId: "c1", correlationId: "r1", idempotencyKey: "j1", reason: "manual",
+      refreshSummary: true, sessionId: "s1", userId: "u1", turnsStartOffset: 16,
+      turns: [{ role: "user", content: "first\nsecond line" }, { role: "assistant", content: "reply" }],
+    };
+    expect(ConsolidationRequest.parse(JSON.parse(JSON.stringify(base)))).toEqual(base);
+    for (const offset of [-1, 0.5, Number.MAX_SAFE_INTEGER]) {
+      expect(ConsolidationRequest.safeParse({ ...base, turnsStartOffset: offset }).success).toBe(false);
+    }
+    expect(ConsolidationRequest.safeParse({ ...base, turns: [{ role: "system", content: "not a conversation turn" }] }).success).toBe(false);
+    expect(ConsolidationRequest.parse({ ...base, turnsStartOffset: undefined }).turnsStartOffset).toBeUndefined();
+  });
 });

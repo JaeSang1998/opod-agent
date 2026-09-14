@@ -36,7 +36,17 @@ export const ConsolidationRequest = z.object({
   refreshSummary: z.boolean().default(false),
   sessionId: z.string().min(1),
   turns: z.array(ChatMessage).min(1),
+  /** Absolute conversation-message position of turns[0]; absent on legacy jobs. */
+  turnsStartOffset: z.number().int().safe().nonnegative().optional(),
   userId: z.string().min(1),
+}).superRefine((input, ctx) => {
+  if (input.turnsStartOffset === undefined) return;
+  if (!Number.isSafeInteger(input.turnsStartOffset + input.turns.length)) {
+    ctx.addIssue({ code: "custom", path: ["turnsStartOffset"], message: "conversation range exceeds safe integer bounds" });
+  }
+  if (input.turns.some((turn) => turn.role !== "user" && turn.role !== "assistant")) {
+    ctx.addIssue({ code: "custom", path: ["turns"], message: "positioned turns must contain only conversation messages" });
+  }
 });
 export type ConsolidationRequest = z.infer<typeof ConsolidationRequest>;
 

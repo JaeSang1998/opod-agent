@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { StubMemoryStore } from "./stub-memory-store.js";
 import type { NewMemory, RelationshipKey, RetrieveOptions } from "./memory-store.js";
@@ -8,6 +9,67 @@ const retrieveOpts: RetrieveOptions = {
   weights: { recency: 1, importance: 1, relevance: 1 },
   recencyDecay: 0.99,
 };
+
+describe("hybrid archival retrieval", () => {
+  it("finds old lexical matches without filling unrelated slots or crossing tenants", async () => {
+    const store = new StubMemoryStore();
+    await store.upsertMany(key, [newMem("제주 여행을 약속했다", [])]);
+    await store.upsertMany(key, Array.from({ length: 520 }, (_, i) => newMem(`무관한 기록 ${i}`, [])));
+    await store.upsertMany({ ...key, userId: "other" }, [newMem("제주 비밀", [])]);
+    const result = await store.retrieveWithTrace(key, [], 4, {
+      ...retrieveOpts, hybrid: { queryText: "제주" },
+    });
+    expect(result.memories.map(m => m.content)).toEqual(["제주 여행을 약속했다"]);
+    expect(result.hybrid?.semanticStatus).toBe("query_unavailable");
+  });
+
+  it("persists grounded metadata and does not deduplicate embeddings across models", async () => {
+    const store = new StubMemoryStore();
+    const embedding = Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0);
+    const content = "사용자는 차를 좋아한다";
+    const metadata = {
+      embeddingModel: "synthetic-a", embeddingSourceSha256: createHash("sha256").update(content).digest("hex"),
+      memoryType: "user_fact" as const, sourceSessionId: "session-a",
+      sourceMessages: [{ role: "user" as const, content: "차 좋아해", position: 3,
+        sha256: createHash("sha256").update("차 좋아해").digest("hex") }],
+    };
+    const first = await store.upsertMany(key, [{ ...newMem(content, embedding), ...metadata }], "op-a");
+    expect(first[0]).toMatchObject(metadata);
+    expect(await store.upsertMany(key, [newMem("changed retry", [])], "op-a")).toEqual(first);
+    const other = "사용자는 바다를 좋아한다";
+    expect(await store.upsertMany(key, [{ ...newMem(other, embedding), embeddingModel: "synthetic-b",
+      embeddingSourceSha256: createHash("sha256").update(other).digest("hex") }])).toHaveLength(1);
+  });
+
+  it("rejects a stale embedded-source hash before storing any part of the batch", async () => {
+    const store = new StubMemoryStore();
+    await store.upsertMany(key, [newMem("existing", [])]);
+    await expect(store.upsertMany(key, [newMem("must not persist", []), {
+      ...newMem("changed source", Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0)),
+      embeddingModel: "synthetic", embeddingSourceSha256: "0".repeat(64),
+    }])).rejects.toThrow("Memory embedding metadata");
+    expect((await store.recentObservations(key, 10)).map(m => m.content)).toEqual(["existing"]);
+  });
+
+  it("keeps identical text from distinct fact, episode and interpretation domains", async () => {
+    const store = new StubMemoryStore();
+    const content = "고양이를 좋아한다";
+    const incoming: NewMemory[] = [
+      { ...newMem(content, []), memoryType: "user_fact" },
+      { ...newMem(content, []), memoryType: "shared_episode" },
+      { ...newMem(content, []), memoryType: "interpretation", kind: "reflection" },
+      { ...newMem(content, []), memoryType: "interpretation", kind: "observation" },
+    ];
+    expect(await store.upsertMany(key, incoming)).toHaveLength(4);
+    expect(await store.upsertMany(key, incoming)).toHaveLength(0);
+    const result = await store.retrieveWithTrace(key, [], 8, {
+      ...retrieveOpts, hybrid: { queryText: "고양이" },
+    });
+    expect(result.memories.map(m => `${m.kind}:${m.memoryType}`)).toEqual([
+      "observation:user_fact", "observation:shared_episode", "reflection:interpretation", "observation:interpretation",
+    ]);
+  });
+});
 
 function newMem(
   content: string,
@@ -63,6 +125,17 @@ describe("StubMemoryStore.upsertMany dedup", () => {
 });
 
 describe("StubMemoryStore.retrieve recency touch", () => {
+  it("does not refresh access time for irrelevant memories excluded by the relevance gate", async () => {
+    let clock = "2026-01-01T00:00:00Z";
+    const store = new StubMemoryStore(() => clock);
+    await store.upsertMany(key, [newMem("unrelated", [0, 1])]);
+    clock = "2026-01-02T00:00:00Z";
+    const result = await store.retrieveWithTrace(key, [1, 0], 6, { ...retrieveOpts, minRelevance: 0 });
+    expect(result.memories).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({ decision: "excluded", reason: "below_relevance_threshold" });
+    expect((await store.recentObservations(key, 10))[0]?.lastAccessedAt).toBe("2026-01-01T00:00:00Z");
+  });
+
   it("advances lastAccessedAt on retrieve and persists the mutation", async () => {
     let clock = "2026-01-01T00:00:00Z";
     const store = new StubMemoryStore(() => clock);

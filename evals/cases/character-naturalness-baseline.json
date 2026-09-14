@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 1,
+  "mode": "diagnostic",
+  "standard": {
+    "minimumPassRate": 0.7,
+    "minimumMeanScore": 0.68,
+    "minimumP10Score": 0.55,
+    "maximumScenarioScoreRange": 0.15
+  },
+  "scenarios": [
+    {
+      "schemaVersion": 1,
+      "id": "bare-opening-mutuality",
+      "title": "Bare opening and mutuality",
+      "description": "Tests whether a character can meet a minimal opening without repeating a canned greeting or turning every short message into an interview.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "처음 대화를 시작하는 성인 사용자",
+        "backstory": "특별한 용건 없이 가볍게 몇 마디 나누려고 메시지를 보냈다.",
+        "textingStyle": "짧고 가벼운 한국어 채팅",
+        "goals": ["부담 없이 몇 마디 나누기", "자연스럽게 대화를 끝내기"],
+        "constraints": ["모든 답에 질문으로 응답하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "open", "simulatorInstruction": "Keep the opening light and use short replies. Do not pre-empt a later scripted invitation." },
+        { "fromTurn": 5, "toTurn": 8, "name": "settle", "simulatorInstruction": "Respond honestly to what the character contributes without rescuing an awkward premise, inventing a problem, or feeding Persona topics." },
+        { "fromTurn": 9, "toTurn": 12, "name": "close", "simulatorInstruction": "Wind down naturally and make the intention to leave clear." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "ㅎㅇ", "purpose": "minimal opening" },
+        { "turn": 4, "message": "그냥 아무 얘기나 하자 ㅋㅋ", "purpose": "invite low-stakes chat" },
+        { "turn": 8, "message": "응 그런 느낌", "purpose": "short acknowledgment" },
+        { "turn": 12, "message": "나 이제 갈게", "purpose": "explicit close" }
+      ],
+      "judgeCriteria": [
+        { "id": "opening_mutuality", "description": "The character contributes naturally without forcing a canned greeting or serial questions.", "weight": 2, "minimum": 3 },
+        { "id": "exit_respect", "description": "The character accepts the user's closing intent without reopening the conversation.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 180,
+        "maxOverlongRatio": 0.08,
+        "maxQuestionTurnRatio": 0.5,
+        "maxConsecutiveQuestionTurns": 2,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 280
+      },
+      "passThreshold": 0.68
+    },
+    {
+      "schemaVersion": 1,
+      "id": "everyday-world-state-restraint",
+      "title": "Everyday self and world-state restraint",
+      "description": "Tests whether everyday self-disclosure stays coherent and appropriately uncertain when no authoritative current activity is supplied.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "캐릭터의 일상에 가볍게 관심을 보이는 성인 사용자",
+        "backstory": "현재 활동에 대한 별도 정보는 갖고 있지 않다.",
+        "textingStyle": "편한 한국어 채팅",
+        "goals": ["캐릭터의 일상을 조금 듣기", "앞서 나온 근황을 다시 확인하기"],
+        "constraints": ["구체적인 현재 사실을 유도하거나 암시하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "ask", "simulatorInstruction": "Ask casually about the present without supplying an answer. If the character asserts a specific current state, react neutrally instead of validating it." },
+        { "fromTurn": 5, "toTurn": 8, "name": "follow", "simulatorInstruction": "Use short, ordinary replies. Do not echo, praise, or elaborate unsupported details; do not turn them into new user facts." },
+        { "fromTurn": 9, "toTurn": 12, "name": "recheck", "simulatorInstruction": "Return to an earlier everyday detail without adding new facts or helping the character maintain an invented story." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "뭐 해?", "purpose": "ask current activity" },
+        { "turn": 4, "message": "아까 말한 거 아직 하는 중이야?", "purpose": "check local continuity" },
+        { "turn": 8, "message": "어제는 뭐 했는데", "purpose": "ask recent episodic detail" },
+        { "turn": 12, "message": "아무튼 오늘 얘기랑은 안 헷갈리지?", "purpose": "probe temporal consistency" }
+      ],
+      "judgeCriteria": [
+        { "id": "world_state_restraint", "description": "The character shares an everyday self without presenting unsupported precision as established fact.", "weight": 2, "minimum": 3 },
+        { "id": "temporal_consistency", "description": "Present and past details remain internally consistent across the conversation.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 220,
+        "maxOverlongRatio": 0.1,
+        "maxQuestionTurnRatio": 0.6,
+        "maxConsecutiveQuestionTurns": 3,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 320
+      },
+      "passThreshold": 0.68
+    },
+    {
+      "schemaVersion": 1,
+      "id": "compliment-playful-reciprocity",
+      "title": "Compliment and playful reciprocity",
+      "description": "Tests whether praise and teasing produce characterful reciprocity without signature-motif spam or generic customer-service gratitude.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "조금 친근하게 장난을 거는 성인 사용자",
+        "backstory": "캐릭터와 몇 번 짧게 대화한 적이 있다.",
+        "textingStyle": "가벼운 칭찬과 장난을 섞는 한국어 채팅",
+        "goals": ["칭찬 반응 보기", "서로 한 번씩 가볍게 놀리기"],
+        "constraints": ["특정 캐릭터의 취미나 캐치프레이즈를 먼저 언급하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "praise", "simulatorInstruction": "Offer sincere but casual praise." },
+        { "fromTurn": 5, "toTurn": 8, "name": "tease", "simulatorInstruction": "Use gentle teasing and respond to the character's tone." },
+        { "fromTurn": 9, "toTurn": 12, "name": "settle", "simulatorInstruction": "Let the playful exchange settle without forcing a final lesson." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "오늘 말투 좀 괜찮은데", "purpose": "casual compliment" },
+        { "turn": 4, "message": "칭찬 받으니까 은근 좋아하네", "purpose": "gentle tease" },
+        { "turn": 8, "message": "너도 나 하나 칭찬해봐", "purpose": "request reciprocity" },
+        { "turn": 12, "message": "됐다 오늘은 이 정도면 인정", "purpose": "playful close" }
+      ],
+      "judgeCriteria": [
+        { "id": "playful_reciprocity", "description": "The exchange contains mutual, situation-appropriate play rather than one-sided praise handling.", "weight": 2, "minimum": 3 },
+        { "id": "motif_restraint", "description": "Character identity appears through choices and tone without forcing unrelated signature motifs.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 190,
+        "maxOverlongRatio": 0.08,
+        "maxQuestionTurnRatio": 0.55,
+        "maxConsecutiveQuestionTurns": 2,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 300
+      },
+      "passThreshold": 0.68
+    },
+    {
+      "schemaVersion": 1,
+      "id": "short-followup-local-context",
+      "title": "Short follow-up and local context",
+      "description": "Tests reference resolution, correction, and topic return when the user relies on short Korean follow-ups.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "설명을 길게 반복하지 않는 성인 사용자",
+        "backstory": "오늘 새로운 취미를 시작할지 고민 중이다.",
+        "textingStyle": "대명사와 생략이 많은 짧은 한국어 채팅",
+        "goals": ["직전 맥락이 이어지는지 확인", "오해를 정정하고 원래 주제로 복귀"],
+        "constraints": ["매번 명사를 다시 말하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "establish", "simulatorInstruction": "Establish one concrete topic and then use short references." },
+        { "fromTurn": 5, "toTurn": 8, "name": "correct", "simulatorInstruction": "Correct one misunderstanding clearly but briefly." },
+        { "fromTurn": 9, "toTurn": 12, "name": "return", "simulatorInstruction": "Shift once, then return to the original topic using an abbreviated reference." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "요즘 기타 배울까 고민 중이야", "purpose": "establish topic" },
+        { "turn": 4, "message": "그건 왜?", "purpose": "elliptical follow-up" },
+        { "turn": 7, "message": "아니 가격 말고 시간 얘기한 거야", "purpose": "repair misunderstanding" },
+        { "turn": 10, "message": "아까 그 얘기로 돌아가서", "purpose": "return to open topic" },
+        { "turn": 12, "message": "응 그거부터 해볼게", "purpose": "resolve reference" }
+      ],
+      "judgeCriteria": [
+        { "id": "local_reference_resolution", "description": "Short references are resolved from the recent exchange without making the user restate everything.", "weight": 2, "minimum": 3 },
+        { "id": "topic_return", "description": "The character preserves and resumes the original open thread after a shift.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 220,
+        "maxOverlongRatio": 0.1,
+        "maxQuestionTurnRatio": 0.65,
+        "maxConsecutiveQuestionTurns": 3,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 340
+      },
+      "passThreshold": 0.7
+    },
+    {
+      "schemaVersion": 1,
+      "id": "low-energy-no-interview",
+      "title": "Low energy without interview pressure",
+      "description": "Tests whether repeated short replies are met with space, light contribution, or a graceful pause instead of escalating question pressure.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "오늘 말수가 적은 성인 사용자",
+        "backstory": "기분이 크게 나쁜 것은 아니지만 대화를 이끌 에너지가 적다.",
+        "textingStyle": "한두 단어와 짧은 문장",
+        "goals": ["부담 없이 곁에 있는 느낌 받기", "질문 압박이 생기면 표현하기"],
+        "constraints": ["새로운 상세 문제를 만들어내지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "quiet", "simulatorInstruction": "Reply briefly and do not introduce a dramatic problem." },
+        { "fromTurn": 5, "toTurn": 8, "name": "pressure", "simulatorInstruction": "Stay low-energy; if questions stack up, say that directly." },
+        { "fromTurn": 9, "toTurn": 12, "name": "pause", "simulatorInstruction": "Accept a lighter rhythm and prepare to pause the conversation." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "그냥 그래", "purpose": "low-energy opening" },
+        { "turn": 4, "message": "응", "purpose": "minimal acknowledgment" },
+        { "turn": 7, "message": "질문은 좀 그만해도 돼", "purpose": "state pressure boundary" },
+        { "turn": 10, "message": "그냥 조용히 있고 싶어", "purpose": "request space" },
+        { "turn": 12, "message": "나중에 얘기하자", "purpose": "pause conversation" }
+      ],
+      "judgeCriteria": [
+        { "id": "low_energy_calibration", "description": "The character matches low energy without inventing distress or demanding disclosure.", "weight": 2, "minimum": 3 },
+        { "id": "question_pressure_repair", "description": "The character reduces pressure immediately when the user asks for fewer questions.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 170,
+        "maxOverlongRatio": 0.08,
+        "maxQuestionTurnRatio": 0.42,
+        "maxConsecutiveQuestionTurns": 2,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 240
+      },
+      "passThreshold": 0.7
+    },
+    {
+      "schemaVersion": 1,
+      "id": "emotion-advice-consent",
+      "title": "Emotion and advice consent",
+      "description": "Tests whether the character distinguishes listening from problem-solving and follows a within-session change in advice consent.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "작은 실수 때문에 속상한 성인 사용자",
+        "backstory": "당장 해결책보다 먼저 감정을 말하고 싶다.",
+        "textingStyle": "솔직하지만 과장하지 않는 한국어 채팅",
+        "goals": ["처음에는 들어주는 반응 받기", "나중에 구체적인 조언 요청하기"],
+        "constraints": ["조언 동의 전에는 해결책을 요청하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "listen", "simulatorInstruction": "Share the feeling and explicitly avoid asking for solutions." },
+        { "fromTurn": 5, "toTurn": 8, "name": "clarify", "simulatorInstruction": "Clarify what kind of support is useful." },
+        { "fromTurn": 9, "toTurn": 12, "name": "advise", "simulatorInstruction": "Explicitly ask for one practical suggestion, then close." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "오늘 일 하나 망쳐서 좀 속상해", "purpose": "share emotion" },
+        { "turn": 4, "message": "지금은 해결책 말고 그냥 들어줘", "purpose": "withhold advice consent" },
+        { "turn": 8, "message": "이제는 네 생각도 좀 듣고 싶어", "purpose": "transition consent" },
+        { "turn": 10, "message": "내일 할 거 하나만 골라줘", "purpose": "request bounded advice" },
+        { "turn": 12, "message": "응 그 정도면 됐어 고마워", "purpose": "close advice" }
+      ],
+      "judgeCriteria": [
+        { "id": "advice_consent_tracking", "description": "Advice is withheld before consent and becomes bounded and relevant after the user requests it.", "weight": 2, "minimum": 3 },
+        { "id": "emotional_proportionality", "description": "The response matches the stated emotion without minimizing it or escalating it into therapy language.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 230,
+        "maxOverlongRatio": 0.1,
+        "maxQuestionTurnRatio": 0.6,
+        "maxConsecutiveQuestionTurns": 3,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 360
+      },
+      "passThreshold": 0.7
+    },
+    {
+      "schemaVersion": 1,
+      "id": "register-negotiation-repair",
+      "title": "Register negotiation and repair",
+      "description": "Tests Korean speech-level continuity, explicit negotiation, and recovery after the user points out an awkward shift.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "처음에는 존댓말을 쓰는 성인 사용자",
+        "backstory": "대화 도중 서로 편하면 반말로 바꿀 의향이 있다.",
+        "textingStyle": "처음에는 존댓말, 합의 뒤에는 반말",
+        "goals": ["말투 전환을 명시적으로 합의", "어색한 전환이 생기면 바로잡기"],
+        "constraints": ["나이만으로 말투 전환을 강요하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "polite", "simulatorInstruction": "Use natural Korean honorific speech." },
+        { "fromTurn": 5, "toTurn": 8, "name": "negotiate", "simulatorInstruction": "Raise and confirm a possible mutual shift to banmal." },
+        { "fromTurn": 9, "toTurn": 12, "name": "repair", "simulatorInstruction": "Point out one awkward inconsistency and observe the repair." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "안녕하세요, 오늘 좀 늦었네요", "purpose": "polite opening" },
+        { "turn": 4, "message": "우리 이제 말 편하게 해도 될까요?", "purpose": "request register change" },
+        { "turn": 6, "message": "응 그럼 반말하자", "purpose": "mutual confirmation" },
+        { "turn": 9, "message": "근데 방금 말투 갑자기 좀 어색했어", "purpose": "flag inconsistency" },
+        { "turn": 12, "message": "응 이제 자연스럽네", "purpose": "confirm repair" }
+      ],
+      "judgeCriteria": [
+        { "id": "register_continuity", "description": "Korean register changes only after mutual confirmation and stays coherent afterward.", "weight": 2, "minimum": 3 },
+        { "id": "register_repair", "description": "An awkward shift is acknowledged briefly and repaired without defensiveness or meta explanation.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 210,
+        "maxOverlongRatio": 0.1,
+        "maxQuestionTurnRatio": 0.6,
+        "maxConsecutiveQuestionTurns": 3,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 340
+      },
+      "passThreshold": 0.7
+    },
+    {
+      "schemaVersion": 1,
+      "id": "memory-correction-forget-restraint",
+      "title": "Memory correction and forget restraint",
+      "description": "Tests relevant recall, correction precedence, and respect for a within-session request to stop retaining a personal detail.",
+      "language": "ko",
+      "estimatedMinutes": 8,
+      "targetTurns": 12,
+      "historyWindowMessages": 24,
+      "user": {
+        "identity": "작은 개인 사실을 알려주는 성인 사용자",
+        "backstory": "강아지 이름을 처음에는 잘못 말했다가 대화 중 정정한다.",
+        "textingStyle": "짧고 명확한 한국어 채팅",
+        "goals": ["관련될 때만 기억하는지 확인", "정정이 이전 사실보다 우선하는지 확인", "망각 요청 전달"],
+        "constraints": ["캐릭터의 기억 능력을 시험한다고 직접 말하지 않는다"]
+      },
+      "phases": [
+        { "fromTurn": 1, "toTurn": 4, "name": "remember", "simulatorInstruction": "Share one benign personal fact and later ask about it naturally." },
+        { "fromTurn": 5, "toTurn": 8, "name": "correct", "simulatorInstruction": "Correct the fact clearly and continue the conversation." },
+        { "fromTurn": 9, "toTurn": 12, "name": "forget", "simulatorInstruction": "Check the correction, then explicitly ask not to retain the detail." }
+      ],
+      "scriptedTurns": [
+        { "turn": 1, "message": "내가 키우는 강아지 이름은 모카야", "purpose": "state benign fact" },
+        { "turn": 4, "message": "아까 말한 이름 뭐였지?", "purpose": "relevant recall" },
+        { "turn": 7, "message": "정정할게, 모카가 아니라 토리야", "purpose": "correct fact" },
+        { "turn": 10, "message": "그럼 이름 다시 말해봐", "purpose": "verify correction precedence" },
+        { "turn": 12, "message": "그 이름도 이제 기억하지 마", "purpose": "forget request" }
+      ],
+      "judgeCriteria": [
+        { "id": "correction_precedence", "description": "The corrected fact replaces the earlier version instead of coexisting or being confused.", "weight": 2, "minimum": 3 },
+        { "id": "forget_request_respect", "description": "The character accepts the forget request without repeating, defending, or dramatizing the stored detail.", "weight": 2, "minimum": 3 }
+      ],
+      "deterministic": {
+        "maxAssistantChars": 210,
+        "maxOverlongRatio": 0.1,
+        "maxQuestionTurnRatio": 0.6,
+        "maxConsecutiveQuestionTurns": 3,
+        "maxNearDuplicatePairs": 0,
+        "minTranscriptChars": 330
+      },
+      "passThreshold": 0.7
+    }
+  ]
+}
