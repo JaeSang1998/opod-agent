@@ -1,19 +1,21 @@
 import type OpenAI from "openai";
 import { createHash, randomUUID } from "node:crypto";
 import { LLM_LOG_TYPE, type LLMProvider } from "../provider/llm-provider.js";
-import type { PersonaStore } from "../persona/persona-store.js";
+import { personaContextHash, PersonaContextIntegrityError, type PersonaStore } from "../persona/persona-store.js";
 import type { MemoryRetrievalResult, MemoryStore } from "../memory/memory-store.js";
 import type { JobQueue } from "../memory/job-queue.js";
 import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
-import { lastUserText, withTurnContext } from "../openai/messages.js";
-import type { ArchivalMemory, CoreMemory, MemoryKind, Summary } from "../memory/types.js";
+import { lastUserMessage, lastUserText, withTurnContext } from "../openai/messages.js";
+import type { ArchivalMemory, MemoryKind, Summary } from "../memory/types.js";
 import { type BondGrade, type BondSnapshot, bondSnapshot } from "../memory/bond.js";
-import type { RetrievalWeights } from "../memory/retrieval.js";
+import { validQueryEmbedding, type RetrievalWeights } from "../memory/retrieval.js";
 import { type Logger, noopLogger } from "../bootstrap/logger.js";
 import type { AgentTool } from "../tools/index.js";
 import { decideConsolidation } from "./consolidation-policy.js";
 import { assembleSystemPrompt } from "./system-prompt.js";
 import { assembleTurnContext } from "./turn-context.js";
+import { contextRecallQuery, selectCharacterRecallIds } from "../persona/character-recall.js";
+import { fitContextBudget, type ContextBudgetResult } from "./context-budget.js";
 import {
   type PersonaBlockSelector,
   type PromptPersonaProvenance,
@@ -35,6 +37,11 @@ export interface ChatServiceConfig {
   weights: RetrievalWeights;
   recencyDecay: number;
   summaryTurnThreshold: number;
+  minMemoryRelevance?: number;
+  integratedContext?: boolean;
+  contextMaxBytes?: number;
+  /** Set only for a fixed provider whose embedding model identity is verified. */
+  embeddingModel?: string;
 }
 
 export type PromptContextSectionName =
@@ -42,6 +49,8 @@ export type PromptContextSectionName =
   | "bond"
   | "persona_start"
   | "persona_retrieved"
+  | "character_memories"
+  | "always_memories"
   | "core_memory"
   | "conversation_summary"
   | "retrieved_memories";
@@ -53,12 +62,13 @@ export interface PromptMemorySourceProvenance {
   score: number | null;
   rawRelevance: number | null;
   retrieval: "selected" | "excluded";
-  retrievalReason: "selected_top_k" | "outside_top_k" | "legacy_store_selected";
+  retrievalReason: "selected_top_k" | "outside_top_k" | "below_relevance_threshold" | "legacy_store_selected" | "duplicate_content";
   injected: boolean;
   injectionReason: "retrieved_memories_section" | "not_retrieved";
 }
 
 export interface PromptMemoryProvenance {
+  hybrid?: MemoryRetrievalResult["hybrid"];
   status: "completed" | "skipped" | "failed";
   reason:
     | "retrieval_completed"
@@ -75,19 +85,23 @@ export interface PromptDebugMetadata {
   stablePromptSha256: string;
   /** Active authored blocks loaded for the character, including non-reactive blocks. */
   personaBlockCount: number;
+  /** Loaded canon sources, not the number injected into the stable prefix. */
   canonCount: number;
   contextSectionNames: PromptContextSectionName[];
   retrievedMemoryCount: number;
   /** Optional on the wire so older remote deployments remain parseable. */
   memoryProvenance?: PromptMemoryProvenance;
+  contextBudget?: Omit<ContextBudgetResult, "messages">;
+  characterRetrieval?: { semanticStatus: string };
   /** Optional on the wire so older remote deployments remain parseable. */
   personaProvenance?: PromptPersonaProvenance;
-  memoryPolicyVersion: 1;
+  memoryPolicyVersion: 1 | 2;
   retrievalConfig: {
     topK: number;
     weights: RetrievalWeights;
     recencyDecay: number;
     summaryTurnThreshold: number;
+    minRelevance?: number;
   };
 }
 
@@ -167,19 +181,64 @@ export class ChatService {
       };
     }
 
-    const lastUser = lastUserText(messages);
-    const [retrievedPersonaBlockIds, retrieval, core, summary, bond] = await Promise.all([
-      this.selectPersonaBlocks(persona, lastUser, signal),
-      this.retrieveMemories(ctx, lastUser, signal),
-      this.getCore(ctx),
+    const latest = lastUserMessage(messages);
+    const lastUser = latest?.content ?? null;
+    const latestIndex = latest ? messages.lastIndexOf(latest) : -1;
+    const previousUser = lastUserText(messages.slice(Math.max(0, latestIndex - 2), Math.max(0, latestIndex))) ?? undefined;
+    const retrievalQuery = this.config.integratedContext ? contextRecallQuery(messages) : lastUser;
+    let contextEmbedding: number[] = [];
+    let embeddingModel = this.config.embeddingModel;
+    if (this.config.integratedContext && retrievalQuery && (this.provider.embedQuery || embeddingModel)) {
+      try {
+        if (this.provider.embedQuery) {
+          const result = await this.provider.embedQuery([retrievalQuery], { signal,
+            log: { type: LLM_LOG_TYPE.memoryRetrieveEmbedding, requestId: ctx.requestId, userId: ctx.userId, characterId: ctx.characterId } });
+          embeddingModel = result.model;
+          contextEmbedding = result.embeddings[0] ?? [];
+        } else {
+          contextEmbedding = (await this.provider.embed([retrievalQuery], { signal }))[0] ?? [];
+        }
+        if (!embeddingModel || !validQueryEmbedding(contextEmbedding)) throw new Error("incompatible query embedding");
+      } catch {
+        contextEmbedding = []; embeddingModel = undefined;
+        this.log.warn("context embedding unavailable; using lexical retrieval");
+      }
+    }
+    const [fallbackBlockIds, retrieval, alwaysMemories, summary, bond, characterRetrieval] = await Promise.all([
+      this.selectPersonaBlocks(persona, lastUser, signal, previousUser),
+      this.retrieveMemories(ctx, retrievalQuery, signal, contextEmbedding, embeddingModel),
+      this.getAlwaysMemories(ctx),
       this.getSummary(ctx),
       this.getBond(ctx),
+      this.config.integratedContext && this.personas.retrieveContext && retrievalQuery
+        ? this.personas.retrieveContext({ characterId: persona.characterId, queryText: retrievalQuery,
+          queryEmbedding: contextEmbedding, embeddingModel, topK: 4 })
+          .catch((error: unknown) => {
+            if (error instanceof PersonaContextIntegrityError) throw error;
+            return { fragmentIds: [] as string[], canonIds: [] as string[], sourceHashes: {} as Record<string, string>, contextHashes: {} as Record<string, string>, semanticStatus: "failed" as const };
+          })
+        : Promise.resolve(null),
     ]);
-    const memories = retrieval.memories;
+    let memories = [
+      ...alwaysMemories,
+      ...retrieval.memories.filter(
+        (memory) => !alwaysMemories.some((always) => always.id === memory.id),
+      ),
+    ];
+    const freshBlock = (id: string, block: typeof persona.blocks[number]) => characterRetrieval?.contextHashes[id] === personaContextHash({
+      content: block.content, kind: block.kind ?? "", injection: block.injection ?? "", recallKeys: block.recallKeys ?? [], occurredAt: null, occurredLabel: null, occurredPrecision: null, sourceRefsSha256: null,
+    });
+    const freshCanon = (id: string, memory: Exclude<typeof persona.canonMemories[number], string>) => characterRetrieval?.contextHashes[id] === personaContextHash({
+      content: memory.content, kind: memory.kind ?? "", injection: memory.injection ?? "", recallKeys: memory.recallKeys ?? [], occurredAt: memory.occurredAt ?? null, occurredLabel: memory.occurredLabel ?? null, occurredPrecision: memory.occurredPrecision ?? null, sourceRefsSha256: memory.sourceRefsSha256 ?? null,
+    });
+    const retrievedPersonaBlockIds = characterRetrieval ? persona.blocks.flatMap(block =>
+      block.id && block.storedFragmentId && characterRetrieval.fragmentIds.includes(block.storedFragmentId) && freshBlock(block.storedFragmentId, block) ? [block.id] : []) : fallbackBlockIds;
     const routedPersona = routePersona({
       persona,
       isConversationStart: isConversationStart(messages, ctx.historyOffset ?? 0),
       retrievedBlockIds: retrievedPersonaBlockIds,
+      retrievedCanonIds: characterRetrieval ? persona.canonMemories.flatMap(memory => typeof memory !== "string" && characterRetrieval.canonIds.includes(memory.id) && freshCanon(memory.id, memory) ? [memory.id] : []) : selectCharacterRecallIds(lastUser ?? "", persona.canonMemories.flatMap(memory =>
+        typeof memory !== "string" && memory.injection === "retrieved" ? [memory] : []), previousUser),
     });
 
     // Client-supplied tools mean pure passthrough (docs/adr/0003): the server tool
@@ -192,37 +251,102 @@ export class ChatService {
     // Two halves, split by how often they change (docs/adr/0007). The system
     // prompt is the character and holds still, so every Provider between here
     // and the GPU can keep it cached; everything that moves per turn — clock,
-    // bond, memory, summary — is appended to the last user message, behind the
-    // whole unchanged history.
+    // bond, memory, summary — rides in the last user message, behind the whole
+    // unchanged history but before the person's actual text.
     const systemPrompt = assembleSystemPrompt({
       persona: routedPersona.stablePersona,
       toolsEnabled: serverToolsActive,
       toolNames: serverToolsActive ? this.tools.map((t) => t.definition.function.name) : undefined,
       tracksBond,
     });
-    const turnContext = assembleTurnContext({
+    const now = this.clock();
+    // Omit only a summary fully covered by the raw prefix supplied in this request.
+    const contextSummary = this.config.integratedContext && (ctx.historyOffset ?? 0) === 0 && summary && summary.turnsCovered <= latestIndex ? null : summary;
+    const turnInputs = {
       bond,
-      core,
-      summary,
+      core: null,
+      summary: contextSummary,
       memories,
       personaStartBlocks: routedPersona.startOnlyBlocks,
       personaRetrievedBlocks: routedPersona.retrievedBlocks,
-      now: this.clock(),
+      characterMemories: routedPersona.retrievedCanonMemories,
+      now,
       timezone: ctx.timezone,
-    });
-    const augmented: ChatMessage[] = [
+      integratedContext: this.config.integratedContext,
+    };
+    const turnContext = assembleTurnContext(turnInputs);
+    let augmented: ChatMessage[] = [
       { role: "system", content: systemPrompt },
       ...withTurnContext(messages, turnContext),
     ];
+    let budgetTrace: Omit<ContextBudgetResult, "messages"> | undefined;
+    if (this.config.integratedContext) {
+      const entries = [
+        ...routedPersona.startOnlyBlocks.map((value, i) => ({ id: `start:${i}`, priority: 90, value: { type: "start" as const, value } })),
+        ...routedPersona.retrievedBlocks.map((value, i) => ({ id: `persona:${i}`, priority: 60 - i, value: { type: "persona" as const, value } })),
+        ...routedPersona.retrievedCanonMemories.map((value, i) => ({ id: `canon:${i}`, priority: 50 - i, value: { type: "canon" as const, value } })),
+        ...memories.map((value, i) => ({
+          id: `memory:${value.id}`,
+          priority: value.contextInjectionMode === "always" ? 80 - i : 40 - i,
+          value: { type: "memory" as const, value },
+        })),
+      ];
+      const seen = new Set<string>();
+      const fingerprint = (text: string) => text.normalize("NFKC").trim().replace(/\s+/gu, " ");
+      const optionalEntries = entries.filter(entry => {
+        const content = fingerprint(entry.value.value.content);
+        const owner = entry.value.type === "memory" ? `memory:${entry.value.value.kind}:${entry.value.value.memoryType ?? "legacy_unknown"}` : entry.value.type;
+        const key = `${owner}:${content}`;
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+      const budget = fitContextBudget<(typeof optionalEntries)[number]["value"]>({ system: systemPrompt, messages, optionalEntries,
+        maxBytes: this.config.contextMaxBytes ?? 32_000,
+        requestOverheadBytes: Buffer.byteLength(JSON.stringify({ ...body, model, messages: [], stream: false,
+          ...(serverToolsActive ? { tools: this.tools.map(t => t.definition) } : {}) }), "utf8") - 2,
+        assembleTurnContext: values => assembleTurnContext({ ...turnInputs,
+          memories: values.flatMap(v => v.type === "memory" ? [v.value] : []),
+          personaStartBlocks: values.flatMap(v => v.type === "start" ? [v.value] : []),
+          personaRetrievedBlocks: values.flatMap(v => v.type === "persona" ? [v.value] : []),
+          characterMemories: values.flatMap(v => v.type === "canon" ? [v.value] : []),
+        }),
+      });
+      if (budget.status === "overflow") throw new Error(`context byte budget exceeded: ${budget.bytes} > ${budget.maxBytes}; raw conversation retained, no request sent`);
+      const { messages: fittedMessages, ...trace } = budget;
+      augmented = fittedMessages; budgetTrace = trace;
+      const retained = new Set(budget.retainedIds);
+      memories = memories.filter(m => retained.has(`memory:${m.id}`));
+      routedPersona.startOnlyBlocks = routedPersona.startOnlyBlocks.filter((_, i) => retained.has(`start:${i}`));
+      routedPersona.retrievedBlocks = routedPersona.retrievedBlocks.filter((_, i) => retained.has(`persona:${i}`));
+      routedPersona.retrievedCanonMemories = routedPersona.retrievedCanonMemories.filter((_, i) => retained.has(`canon:${i}`));
+      for (const source of retrieval.provenance.sources) {
+        if (source.injected && !memories.some(m => m.id === source.id)) { source.injected = false; source.injectionReason = "not_retrieved"; }
+      }
+      for (const source of routedPersona.provenance.sources) {
+        if (source.destination === "turn_context" && ![...routedPersona.startOnlyBlocks, ...routedPersona.retrievedBlocks].some(b => b.id === source.id)) {
+          source.destination = "excluded"; source.reason = "not_retrieved";
+        }
+      }
+      for (const source of routedPersona.provenance.canonSources ?? []) {
+        if (source.destination === "turn_context" && !routedPersona.retrievedCanonMemories.some(m => m.id === source.id)) {
+          source.destination = "excluded"; source.reason = "not_retrieved";
+        }
+      }
+    }
     const contextSectionNames: PromptContextSectionName[] = ["current_moment"];
     if (bond) contextSectionNames.push("bond");
     if (routedPersona.startOnlyBlocks.length > 0) contextSectionNames.push("persona_start");
     if (routedPersona.retrievedBlocks.length > 0) {
       contextSectionNames.push("persona_retrieved");
     }
-    if (core?.content) contextSectionNames.push("core_memory");
-    if (summary?.content) contextSectionNames.push("conversation_summary");
-    if (memories.length > 0) contextSectionNames.push("retrieved_memories");
+    if (routedPersona.retrievedCanonMemories.length > 0) contextSectionNames.push("character_memories");
+    if (memories.some((memory) => memory.contextInjectionMode === "always")) {
+      contextSectionNames.push("always_memories");
+    }
+    if (contextSummary?.content) contextSectionNames.push("conversation_summary");
+    if (memories.some((memory) => memory.contextInjectionMode !== "always")) {
+      contextSectionNames.push("retrieved_memories");
+    }
 
     return {
       request: {
@@ -250,13 +374,16 @@ export class ChatService {
         contextSectionNames,
         retrievedMemoryCount: memories.length,
         memoryProvenance: retrieval.provenance,
+        ...(budgetTrace ? { contextBudget: budgetTrace } : {}),
+        ...(characterRetrieval ? { characterRetrieval: { semanticStatus: characterRetrieval.semanticStatus } } : {}),
         personaProvenance: routedPersona.provenance,
-        memoryPolicyVersion: 1,
+        memoryPolicyVersion: this.config.minMemoryRelevance === undefined ? 1 : 2,
         retrievalConfig: {
           topK: this.config.retrieveTopK,
           weights: { ...this.config.weights },
           recencyDecay: this.config.recencyDecay,
           summaryTurnThreshold: this.config.summaryTurnThreshold,
+          ...(this.config.minMemoryRelevance !== undefined ? { minRelevance: this.config.minMemoryRelevance } : {}),
         },
       },
     };
@@ -266,6 +393,7 @@ export class ChatService {
     persona: Parameters<typeof routePersona>[0]["persona"],
     query: string | null,
     signal?: AbortSignal,
+    previousQuery?: string,
   ): Promise<readonly string[]> {
     const blocks = persona.blocks.filter((block) => block.injection === "retrieved");
     if (!query || !this.personaBlockSelector || blocks.length === 0) {
@@ -273,7 +401,7 @@ export class ChatService {
     }
     try {
       return await this.personaBlockSelector.selectRelevantBlockIds(
-        { characterId: persona.characterId, blocks, query },
+        { characterId: persona.characterId, blocks, query, ...(previousQuery ? { previousQuery } : {}) },
         signal,
       );
     } catch (err) {
@@ -288,6 +416,8 @@ export class ChatService {
     ctx: ChatContext,
     query: string | null,
     signal?: AbortSignal,
+    contextEmbedding: number[] = [],
+    embeddingModel?: string,
   ): Promise<{ memories: ArchivalMemory[]; provenance: PromptMemoryProvenance }> {
     if (!ctx.userId || !ctx.characterId) {
       return {
@@ -302,7 +432,7 @@ export class ChatService {
       };
     }
     try {
-      const [embedding] = await this.provider.embed([query], {
+      const [embedding] = this.config.integratedContext ? [contextEmbedding] : await this.provider.embed([query], {
         signal,
         log: {
           type: LLM_LOG_TYPE.memoryRetrieveEmbedding,
@@ -318,7 +448,9 @@ export class ChatService {
         };
       }
       const key = { userId: ctx.userId, characterId: ctx.characterId };
-      const opts = { weights: this.config.weights, recencyDecay: this.config.recencyDecay };
+      const opts = { weights: this.config.weights, recencyDecay: this.config.recencyDecay,
+        minRelevance: this.config.minMemoryRelevance,
+        ...(this.config.integratedContext ? { hybrid: { queryText: query, embeddingModel } } : {}) };
       if (this.memory.retrieveWithTrace) {
         const result = await this.memory.retrieveWithTrace(
           key,
@@ -366,6 +498,7 @@ export class ChatService {
   ): PromptMemoryProvenance {
     const injectedIds = new Set(result.memories.map((memory) => memory.id));
     return {
+      ...(result.hybrid ? { hybrid: result.hybrid } : {}),
       status: "completed",
       reason: "retrieval_completed",
       sources: result.candidates.map((candidate) => {
@@ -385,13 +518,18 @@ export class ChatService {
     };
   }
 
-  private async getCore(ctx: ChatContext): Promise<CoreMemory | null> {
-    if (!ctx.userId || !ctx.characterId) return null;
+  private async getAlwaysMemories(ctx: ChatContext): Promise<ArchivalMemory[]> {
+    if (!ctx.userId || !ctx.characterId) return [];
     try {
-      return await this.memory.getCoreMemory({ userId: ctx.userId, characterId: ctx.characterId });
+      return await this.memory.alwaysMemories({
+        userId: ctx.userId,
+        characterId: ctx.characterId,
+      });
     } catch (err) {
-      this.log.warn("core memory fetch failed; continuing without it", { err: String(err) });
-      return null;
+      this.log.warn("always memory fetch failed; continuing without it", {
+        err: String(err),
+      });
+      return [];
     }
   }
 
@@ -512,6 +650,7 @@ export class ChatService {
         characterId: ctx.characterId,
         sessionId: ctx.sessionId,
         turns: decision.turns,
+        turnsStartOffset: decision.turnsStartOffset,
         reason: decision.reason,
         refreshSummary: decision.refreshSummary,
       });

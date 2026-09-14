@@ -37,7 +37,7 @@ is exercisable; the Postgres adapter lands once the schema is confirmed.
 
 The persona schema question is settled: there is no separate Agent-side persona
 schema. The Agent reads the OPOD rows as-is — `characters` +
-`character_personas` (ordered free-text blocks) + `character_memories` (canon)
+`character_personas` (ordered free-text blocks) + `character_canon_memories` (canon)
 — via the built-in `PostgresPersonaStore`, wired whenever `DATABASE_URL` is
 set. Blocks are the single source of truth shared with the content pipeline;
 active rows are the serving truth (no publish state). Memory/queue remain on

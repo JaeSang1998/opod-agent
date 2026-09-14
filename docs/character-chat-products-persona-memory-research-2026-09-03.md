@@ -1,20 +1,23 @@
 # 경쟁 캐릭터챗 Persona·Memory 구조 및 사용법 비교 연구
 
 - 작성일: 2026-09-03
-- 상태: 외부 비교 조사 + 2026-09-07 계획 재검토·S1 구현·첫 모델 smoke 12회 완료. 사용자 검수·반복 본 비교 대기
+- 상태: 2026-09-08 D28 공식 레퍼런스 재확인·실제 Persona 본문 분리/캐릭터 기억 조건부 회수 구현 및 로컬 검증. 실제 답변 품질은 미검증
 - 범위: Character.AI, Kindroid, Nomi, Replika, SillyTavern/Tavern Card,
   Backyard AI, AI Dungeon, Convai, Inworld와 공개 메모리 프레임워크·연구
 - 제한적 공개면 추가 확인: CHAI, PolyBuzz, CrushOn.AI; Janitor AI, Talkie
 - OPOD 적용 범위: 특정 캐릭터가 아닌 공통 Persona/Memory/Context 계약
 - 선행 문서: [`character-chat-architecture-research-2026-09-02.md`](character-chat-architecture-research-2026-09-02.md)
 - 현행 P1 계획: 이 문서의 10~11절. P0 범위와 실행 이력은 [`P0 계획`](character-chat-p0-baseline-plan-2026-09-02.md)에 보존한다.
+- 최종 목표 달성 기준: 이 문서의 10.6절(v1 작업 기준). 후속 목표 진행 요청으로 채택했으며 실행량·DDL·배포 승인은 별도다.
 - 현행 결과: [`reports/character-chat-p0-before-after-2026-09-03.md`](reports/character-chat-p0-before-after-2026-09-03.md)
 
 ## 1. 결론
 
 기존 제품 조사에서 얻은 OPOD용 설계 가설은 다음과 같다. 외부 제품이 비슷한 정보 구분을
 제공한다는 사실만으로 OPOD의 원인이나 개선 효과가 증명되지는 않는다. 이번 재검토는 저장소
-코드와 기존 사용자 검수·실행 기록을 대조했으며 외부 제품의 최신 사양을 재검증한 작업은 아니다.
+코드와 기존 사용자 검수·실행 기록을 대조했다. 9월 7일 재검토 당시에는 외부 사양을
+재검증하지 않았으나, **9월 8일 D28에서 아래 11.23절의 공식 자료를 다시 확인했다**.
+기존 제품 표 전체가 모두 이번에 재검증된 것은 아니다.
 
 > **모든 설정을 모델에게 항상 보여주는 것이 아니라, 지금 필요한 종류의 정보만 지금 맞는
 > 위치와 강도로 보여준다.**
@@ -948,6 +951,92 @@ Persona-only 무효과를 H1 기각이나 H2 입증으로 단정하지 않는다
 - 적절한 context에서도 한국어·대화 행동이 어색함: source 표현, 공통 지침, 모델 비교를 개별
   실험으로 제안한다. 모델 차이를 입력 구조의 효과와 섞지 않는다.
 
+### 10.6 최종 목표 달성 기준 v1 (2026-09-07 수립)
+
+**목표:** 모든 캐릭터가 자기 개성과 정확한 기억을 유지하며, 실제 사람과 메시지를 주고받는 듯
+자연스럽게 대화하도록 공통 생성 경로를 개선하고, 검증된 변경을 서비스에 적용한다.
+특정 구조를 구현하거나 특정 모델을 쓰는 것 자체는 완료 조건이 아니다.
+
+**기준의 지위:** 최초 수치는 agent 제안이었고, 후속 사용자가 “목표랑 종료 기준에 맞춰” 작업을
+지시해 v1을 목표의 작업 기준으로 채택했다(`user-confirmed`, D14). 업계 표준이나 측정 결과는
+아니다. 사용자 원문 판정 우선·캐릭터별 예외 금지는 기존 결정대로 유지한다. 기준 버전을 고정하고,
+결과를 보고 기준을 낮춰 같은 실행을 통과시키지 않는다. 변경이 필요하면 이유와 새 버전을 남기고
+새 검증으로 다룬다. 목표 실행 요청은 필요한 구현을 추진하는 지시이며, 표본 규모를 곧바로 유료
+실행하거나 구체화하지 않은 DDL·배포를 실행하는 승인으로 확대하지 않는다.
+
+#### 완료 판정표 — G1~G7을 모두 충족해야 한다
+
+| Gate | 달성 기준 | 판정 근거 |
+| --- | --- | --- |
+| G1 대화 자연스러움 | 최종 미사용 평가에서 **캐릭터마다 사용자 합격률 95% 이상**. 아래 최소 표본이면 48건 중 46건 이상 | 사용자가 문맥을 읽고 후보 답변 각각에 내린 합격/불합격. 짧음·친근함·자동 점수는 대체 근거가 아님 |
+| G2 기존 대비 실질 개선 | 같은 실행의 현행 기준선과 비교해 **전체 쌍의 60% 이상에서 개선안을 선호**, 캐릭터마다 승리 수 ≥ 패배 수 | 동률·둘 다 부적절도 분모에 포함. 4명 최소 표본이면 192쌍 중 116승 이상. G1의 절대 품질과 함께 충족 |
+| G3 캐릭터성·대화 기여 | 의견·장난·위로·반대·관련 자기 이야기에서 **캐릭터별 적합 판정 95% 이상**, 사용자 확인된 신규 개성 손실·기계적 응대 회귀 0건 | 동일한 중립 Persona 요약과 원문 비교. 설정을 설명하지 않아도 관점·말투·자기 기여가 있는지 사용자 판정. 모두 같은 무난한 답을 하면 실패 |
+| G4 기억·사실 경계 | 필수 회상 probe에서 사전 지정한 사실을 정확히 답하고, 저장→재조회→정정→망각의 필수 구조 검사를 **전부 통과**. 아래 중대 오류 **0건** | 정답 source·상태가 있는 격리 fixture의 실제 저장/선택/최종 입력 검사와 답변 원문. 주입 ID만으로 회상 성공 판정 금지 |
+| G5 긴 대화·세션 연속성 | 캐릭터마다 **20턴 대화 × 3회**를 사용자 검수해 3회 모두 전체 흐름 합격. 각 대화의 개별 응답 합격률도 95% 이상, 중대 오류 0건 | 1턴은 사용자 발화+assistant 응답. 세션 전환·요약/최근 문맥 축약을 실제로 거친 뒤 기억과 말투를 확인. 앞부분의 품질로 뒷부분의 반복·붕괴를 덮지 않음 |
+| G6 캐릭터 공통 적용 | 고정 snapshot의 **활성 캐릭터 전부**가 각 gate 통과. 캐릭터 이름·ID·직업·취미·문구에 맞춘 runtime 예외 0건 | 공통 코드와 데이터 분리 검토, 전 캐릭터 교차 결과. 정상적인 캐릭터별 Persona 데이터·stable ID 매핑은 예외 코드와 구분 |
+| G7 서비스 적용·운영 가능성 | G1~G6을 진단용 사전 선택이 아닌 **실제 서비스 경로**에서 충족, 관련 회귀 검사 통과, 승인된 적용·되돌리기 검증 완료 | 선택기를 채택하면 실제 자동 선택기를 포함. 사용자 Memory는 격리 영속 저장소로 검증. 동등 조건에서 첫 응답/전체 응답 p95 지연과 평균 턴 비용이 각각 기준선의 1.2배 이내 |
+
+G1/G3의 합격은 사용자가 판단하며 AI가 대신 채우지 않는다. G3는 캐릭터별 해당 5상황 × 3회인
+15건을 분모로 하므로 최소 표본에서는 15건 모두 적합해야 한다(올림 적용). G2는 `W/N`이며
+`N = W + L + tie + both_bad`다. 양쪽 다 나쁜데 덜 나쁜 쪽을 골랐어도 G1 합격으로 바뀌지 않는다.
+95%는 높은 절대 품질, 60%는 동률을 제외하지 않은 개선 폭을 요구하려는 제품 목표 제안이다.
+사용자 1인의 이 표본을 전체 사용자 선호나 통계적 확증으로 일반화하지 않는다.
+미검수·기권·누락·생성 실패는 성공 분모에서 몰래 빼지 않는다. 사전 지정 표본의 검수 완료율이
+100%가 아니면 해당 gate는 **미검증**이며, 기술적으로 무효인 실행의 재시도도 사전 계약과 기록을 따른다.
+
+#### 중대 오류와 경계
+
+- 다른 사용자·캐릭터의 기억, 비공개 지침 또는 내부 메타데이터를 답변에 노출한다.
+- 존재하지 않는 사용자 사실·공유 경험을 기억한다고 단정하거나, 과거 사건을 현재 활동이라고
+  확정한다. 근거 있는 회상·현재 상태, 대화에 맞는 농담·가정은 이를 구분해 평가한다.
+- 정정 완료 이후 폐기된 사실을 현행 사실로 사용하거나, 망각 완료 이후 대상 정보를 재노출한다.
+  archival 검색만이 아니라 Core/Summary/후속 history/캐시/백그라운드 재요약 경로의 재유입을 확인한다.
+  완료 전 요청에 원문이 들어 있던 사실과 완료 후 재노출은 구분하고, 사용자가 새로 명시적으로
+  제공한 사실은 별도 입력으로 기록한다. 이 검증을 백업까지 물리 삭제했다는 보장으로 확대하지 않는다.
+- 캐릭터 정체성에 관한 명백한 사실 모순, 필수 회상 실패 또는 사용자 확인된 캐릭터성 소실이
+  발생한다. 이런 오류는 평균 점수로 상쇄할 수 없다.
+
+중대 오류가 한 건이라도 있으면 적용을 중단하고 원인 수정·영향 범위 재검증 후 판단한다.
+여기서 0건/전부 통과는 **사전 고정한 평가 범위의 관측 기준**이지 미래의 무오류 보장이 아니다.
+일반 결함은 기존 [사용자 22개 주석](reports/character-chat-p0-human-review-2026-09-02.md#주석-22개-반영표)의
+의미를 따른다. 새 질문·자기 이야기·업계 표현 자체를 금지하지 않으며 문맥과 캐릭터 적합성을 본다.
+반말·존댓말 혼용도 전역 실패 규칙으로 바꾸지 않는다.
+
+#### 최종 검증 표본과 검수 부담
+
+- 국소 비교는 활성 캐릭터마다 **미사용 16상황 × 3반복**을 최소 표본으로 한다. 상황은
+  ①중립 인사/단답 ②의견/선택 ③장난 ④위로 ⑤반대/거절 ⑥관련 자기 이야기 ⑦직접 회상
+  ⑧대명사 후속 질문 ⑨주제 종료/무관한 고중요도 기억 ⑩현재 상태 미상 ⑪유효한 현재 상태
+  ⑫만료된 상태 ⑬정정 ⑭망각 ⑮기억에 없는 질문 ⑯지적 후 복구다.
+- 각 prefix, 기대 사실, 허용/금지 source와 상태 전이, 캐릭터 적합성 판단용 Persona 요약을 생성
+  전에 고정한다. 기존 22개 주석과 tuning case는 회귀 자료이며 이 최종 표본의 분모에 섞지 않는다.
+  최종 표본을 보고 수정하면 새 holdout을 만든다. 동일 반복의 seed를 독립 표본 보장으로 해석하지 않는다.
+- 긴 대화는 같은 출발 상태와 사용자 진행 원칙으로 시작해 각 조건의 자체 history를 이어간다.
+  각 20턴 안에서 주제 전환, 지적 후 복구, 기억 저장과 세션 재개, 정정/망각 후 재질문을 포함한다.
+  세션 경계와 문맥 축약 시점을 미리 고정하며 단순히 20턴을 보냈다는 이유로 장기 기억 성공으로
+  세지 않는다. 조건별 발화에 따라 사용자 흐름이 달라지면 동일 prefix 인과 비교와 분리 보고한다.
+- 현재 4명 기준 국소 **192쌍**, 긴 대화 **12쌍(조건별 240응답)**이다. 최종 후보 하나와 기준선을
+  비교하면 답변 생성만 최소 **864회**다. 기억 추출·선택·요약·embedding 등 추가 요청은 별도 산정한다.
+  이 수치는 최종 검증 규모 제안이며, 완료된 smoke 12회 승인에 포함되지 않는다. 작은 진단 단계부터
+  효과를 확인한 뒤 필요할 때 별도 실행 계약으로 진행한다.
+- 사용자는 한 번에 **8쌍 이하**로 나눠 검수한다. 같은 캐릭터의 이름·원문은 보존하고 조건·모델·
+  자동 점수·source badge는 가린다. 첫 판정은 더 좋음/동률/둘 다 부적절과 후보 각각의 적합성으로
+  기록하며 실패 근거는 해당 문장·턴에 연결한다. 긴 대화는 턴별 확인과 전체 흐름 판정을 함께 제공한다.
+  검수 순서는 사전 무작위화하고 좋은 결과만 골라 보여주지 않는다. 부분 검수는 부분 결과로만 보고한다.
+
+#### 완료 상태와 현재 위치
+
+1. **기준 수립:** v1 작업 기준을 고정한 현재 상태. 기준 채택과 실제 충족은 구분한다.
+2. **개선 입증:** 고정한 기준으로 G1~G6을 모두 통과한 사용자 판정·원문·구조 근거가 존재한다.
+3. **최종 완료:** G7까지 충족한 변경이 승인된 서비스 환경에 적용되고, rollback과 적용 후 확인
+   결과·잔여 한계가 기록되어 있다. 사용자 합격과 별개로 미승인 배포를 실행하지 않는다.
+
+현재는 실제 모델 smoke 12회의 연결 확인까지 완료했다. G1~G7 최종 gate는 아직 모두 미검증이다.
+기존 자동 PASS, 합성 구조 검사, 이 기준 문서 작성은 최종 품질 달성으로 승격하지 않는다.
+G7의 비용에는 선택·요약·기억 쓰기 등 부수 호출을 포함하고, 지연 측정 조건·분포·표본 수를 보고한다.
+1.2배를 넘는 대안은 숨겨 통과시키지 않고 품질 이득과 운영 trade-off를 사용자 결정으로 돌린다.
+현재 제공사/reasoning이 섞인 smoke는 이 비교의 기준선이 될 수 없다.
+
 ## 11. 실행 순서와 경계 (2026-09-07 수정)
 
 이 절이 다음 작업의 계획 정본이다. 기존 P1-0/1 결과는 보존하며 후속 구현과 비용이 드는 실행은
@@ -970,7 +1059,7 @@ mapping·제품 routing 적용·반복 본 비교는 미실행이다.
 | D1 | in-scope / `user-confirmed` | active | 공통 경로 개선, 사용자 원문 검수, 캐릭터별 runtime 예외 금지 |
 | D2 | preserve-current-behavior / `repo-evidenced` | active | ADR 0008의 네 경로와 legacy fallback, DB 원문·schema 유지 |
 | D3 | in-scope / `agent-assumed` | active | 아래 순서를 가역적인 연구 계획으로 채택. 성능 효과는 미확정 |
-| D4 | in-scope / `repo-evidenced` | active | 개발 DB 접속·활성 4/45/79와 격리 snapshot 확인. hash로 원문 불변성을 검증. Memory 기존 type을 adapter가 읽지 않는 사실 확인 |
+| D4 | in-scope / `repo-evidenced` | active | 개발 DB 접속·활성 4/45/79와 격리 snapshot 확인. hash로 원문 불변성을 검증. 조사 당시 Memory type이 adapter에서 소실됐고 후속 C1에서 보존하도록 수정(11.7절) |
 | D5 | deferred / `recommended-unconfirmed` | deferred | greeting의 제품 변경, examples 최종 정책, selector 방식·threshold는 해당 단계에서 결정. 혼합 분리는 D9, 예시 진단 입력은 D10으로 이동 |
 | D6 | deferred / `recommended-unconfirmed` | deferred | Current State 정본·만료 정책, Bond/말투 제품 동작, 모델 교체는 비교 근거 뒤 결정 |
 | D7 | 계획 수정 턴 한정 / `user-confirmed` | superseded | 당시 계획 수정만 진행. 후속 진행 범위는 D8로 대체 |
@@ -979,6 +1068,22 @@ mapping·제품 routing 적용·반복 본 비교는 미실행이다.
 | D10 | in-scope / `agent-assumed` | active | examples 54문답 조사와 A/B/C 진단 입력 준비. C의 네 ID 미주입 후보는 제품 정책으로 채택하지 않음. 모델 smoke 실행은 D12 |
 | D11 | in-scope / `user-confirmed` | implementation-complete | 기존 모델 경로의 고정 입력 비교와 1인 review 연결·검증 완료. 유료 smoke 실행은 D12 |
 | D12 | in-scope / `user-confirmed` | execution-complete / review-pending | DB 모델로 12회, 최대 출력 8192, 재시도 0의 실행안을 승인받아 완료. 청구액 $0.020053869, 실제 검증 32개 통과. 5개 제공사가 섞여 인과 해석 제한. 288회 확대는 포함하지 않음 |
+| D13 | in-scope / `user-confirmed` | active | 최종 목표 달성 기준 수립 요청. 10.6절에 기준·측정법·완료 상태를 문서화하며 이번 범위에 코드·DB·유료 실행·배포는 포함하지 않음 |
+| D14 | in-scope / `user-confirmed` | active | 후속 목표 “목표랑 종료 기준에 맞춰 캐릭터챗에 맞는 페르소나, 메모리 구조가 되도록 작업해”에 따라 10.6절 v1을 작업 기준으로 채택. 추가 유료 실행·DDL·배포 계약과 현재 달성 사실은 별도 |
+| D15 | in-scope / `user-confirmed` | implementation-verified | “진행하고 끝날때까지 물어보지말고 그냥 진행해”에 따라 M1과 목표 범위의 안전한 공통 구현을 진행. 반복 구현 승인 질문은 하지 않음. 인간의 대화 품질 판정을 대신하거나 미승인 배포·새 DDL·유료 본 비교로 범위를 확대하지 않음 |
+| D16 | in-scope / `user-confirmed` | implementation-verified | 2026-09-08 “계속해”에 따라 M2의 겹치는 Summary 작업을 수정·검증. DDL 없이 기존 JSON job에 source 시작 위치를 보존하고, 평가 전용 job 생략을 제거. 정정/망각 전체 구현으로 확대 해석하지 않음 |
+| D17 | in-scope / `user-confirmed` | implementation-verified / follow-up D18 | 2026-09-08 “그건 나중으로 미루고 ‘뜬금없고 어색한 대화’를 직접 개선하는 작업 먼저 전부 마무리해”에 따라 정정·망각/신규 DDL을 후순위로 이동. 공통 Persona 사용법과 관계·시각·기억의 답변 지침 충돌을 수정. XP·저장·원문·모델은 유지. 당시 실제 답변 비교의 외부 전송·비용 승인 차단은 후속 D18로 해소. 오프라인 입력 검증으로 품질 판정을 대체하지 않음 |
+| D18 | in-scope / `user-confirmed` | execution-complete / review-pending | 사용자가 직전의 명시적 4명·OpenRouter/Xiaomi·최대 32답변·총 $1 실행 요청에 “ㅇㅇ”로 승인. 고정 전후 32답변 완료, $0.034232076 청구, 제공사 전부 Xiaomi, 재시도 0. D17의 외부 실행 차단은 해소됐으나 자연스러움 판정은 사용자 원문 검수 대기. 추가 모델 호출·DDL·배포 미승인 |
+| D19 | in-scope / `user-confirmed` | private-review-site-deployed | “원격이라 못봐 볼 수 있게 해” 요청으로 기존 32답변/16쌍 검수 화면만 본인 전용 Sites에 게시. 판정은 복사 후 대화에 제출하며 미검수 유지. 제품 배포·DB 변경·추가 모델 호출은 없음 |
+| D20 | in-scope / `user-confirmed` | pairwise-received / individual-unreviewed | 사용자가 두 packet의 16쌍 선택·코멘트를 제출. 한쪽 선호 9(전 5/후 4), 둘 다 부적절 4, 비슷함 1, 보류 2. 원본 draft와 개별 32건 not-reviewed 유지. 선호를 PASS로 추정하거나 보류를 임의 판정하지 않음 |
+| D21 | in-scope / `user-confirmed` | implementation-verified / response-quality-unverified | D20 뒤 “진행해”에 따라 N2 공통 참조 표시·화제 중단 반응·말투 연속성·어휘/인사 지침 수정. 관련 69건과 전체 검사 통과, 네 캐릭터 16쌍 입력 보존 확인. 새 실제 답변·외부 전송·DDL·배포 없음 |
+| D22 | bounded execution / `user-confirmed` | partial-execution / response-quality-unverified | 새 4명·OpenRouter/Xiaomi·최대 32답변/$1 요청에 “진행해” 승인. N1/N2 9시도·8완료 뒤 9번째 요청 60초 시간 초과로 중단, 23미시도·재시도 0. 확인 청구 $0.01995432, 시간 초과 건 미확인. 4쌍 부분 결과만 검수용으로 보존; D20 판정 불변 |
+| D23 | review receipt / `user-confirmed` | pairwise-received / individual-unreviewed | N2 부분 packet의 사용자 4쌍 선택 접수: left 2/right 1/both_bad 1, 조건 연결 N1 1/N2 2. 나희 알람 문맥 코멘트 “둘다 문맥이 이상함” 보존. draft·개별 8건 not-reviewed·D20 판정 유지. 개별 PASS/FAIL·다른 선택의 이유·전체 개선 추정 없음 |
+| D24 | continuation / `user-confirmed`; placement candidate / `agent-assumed` | implementation-verified / response-quality-unverified | “다음 진행해”에 따라 N3 단일변수 배치 후보 구현. 기존 공통 helper에서 context 뒤에 실제 발화를 둠. 지침/자료/역할/이전 대화 불변·추가 0byte. 16쌍 입력 보존·관련 87건·전체 검사 통과. 인과 가설 unknown, 유료 호출·DDL·배포 없음 |
+| D25 | bounded execution / `user-confirmed` | execution-complete / response-quality-unverified | 명시적 같은4명·OpenRouter/Xiaomi·32답변/$1·무재시도·비공개 게시 요청에 “진행해” 승인. N2/N3 32시도·32답변·16쌍 완료, 청구 $0.023467782, 양 조건 120초, 재시도 0. 개별/쌍 모두 미검수, D20/D23 제출 보존. 제품 배포·DB 변경 없음 |
+| D26 | review receipt / `user-confirmed`; source audit / `repo-evidenced` | pairwise-received / individual-unreviewed | N2/N3 선택15건·미검수 코멘트1건 접수. N2 3/N3 6 선호·both_bad 3/tie 1/abstain 2/not-reviewed 1. 개별32·draft·원문 보존. 캐릭터성 부족 관찰은 전체 피드백이며 개별 점수 아님. 기존 예시·제작 자료 주입을 확인하고 구조/일상 반응 보완을 제안했으나 원인 확정·제품 수정·새 호출 없음 |
+| D27 | local preparation / `user-confirmed`; input preservation / `repo-evidenced` | N4-prepared / quality-unverified | 45블록 용도 목록·독립 예시4블록만 제외하는 기존 공통 라우팅. 32입력/16쌍 단일변수 검증, 성격/말투/canon79 보존. 검수에 원문 발췌·합성 관계 설명을 전달할 로컬 UI 준비. 첫 실제 비교 예정4쌍/8답변은 미실행·별도 범위. 유료 호출/게시/배포0 |
+| D28 | implementation / `user-confirmed`; source contract / `externally-evidenced`; runtime / `repo-evidenced` | structure-verified / quality-unverified | “다른 서비스들 레퍼런스를 찾고 페르소나랑 메모리 구조를 수정해”에 따라 혼합 원문15개→40구간, canon79개→상시11/조건부68, 공통 keyphrase 회수와 사용자 기억 관련도 하한을 실제 경로에 연결. HTTP 입력48건·전체 검사 통과. 원문/검수 보존, DB/DDL/유료 모델/배포 없음. 분류의 적절성과 자연스러움은 인간 검수 전 |
 
 계획 문서 수정 당시 blocking decision은 0개였다. 실제 source 조사 뒤 S2 준비의 첫 결정으로
 D9가 구체화됐고 후속 승인으로 완료했다. D5/D6는 나머지 후속 결정을 보류한 기록이며 확정 정책이나 구현 승인이 아니다.
@@ -1065,7 +1170,7 @@ goal 7 / preference 16 / relationship 3 / routine 14이며 `auto:` reason은 eve
 
 | 후보 | 바꿀 한 가지와 소유자 | 검증·진행 조건 |
 | --- | --- | --- |
-| Character lore 선별 | `src/persona/postgres-persona-store.ts` read 결과와 `src/chat/system-prompt.ts`의 canon 경로 | 먼저 DB의 기존 `id/type/reason/created_at/updated_at`을 조사하고 새 schema 필요성을 판단. type 단독으로 route·만료를 확정하지 않음. 중복 source나 과거 사건 문제가 재현되면 같은 원문·핵심 canon을 보존하는 별도 비교. 현재 `canonMemories: string[]`에는 ID 추적된 선별이 없음 |
+| Character lore 선별 | `src/persona/postgres-persona-store.ts` read 결과와 `src/chat/system-prompt.ts`의 canon 경로 | C1에서 기존 `id/type/reason/created_at/updated_at` 보존을 구현했으며 schema는 유지. type 단독으로 route·만료를 확정하지 않음. 중복 source나 과거 사건 문제의 비교에서는 같은 원문·핵심 canon을 보존. 구조화된 canon 읽기는 준비됐지만 ID 기반 선별·유효성 정책은 아직 없음 |
 | 사용자 Memory 유효성 | `src/memory/retrieval.ts`, Store와 `evals/cases/p1-memory-structure.json` | fixture 상태별 제외/허용 검증. 검색 제외만으로 저장·정정·완전한 망각 구현을 완료 처리하지 않음 |
 | 사용자 Memory 관련성 | 같은 scorer와 `src/chat/chat-service.ts` | 상태 필터를 고정하고 raw relevance/empty를 비교한 뒤, 필요하면 별도로 query 문맥 확장 비교. 미사용 positive/negative case에 threshold를 조정하지 않음 |
 | Context 순서 | `src/openai/messages.ts`와 해당 테스트 | 내용은 고정하고 context/user text 순서만 비교. 짧은 후속 발화, 사용자 text 보존, prompt 안정성과 token·지연도 확인 |
@@ -1091,6 +1196,471 @@ DB schema 승격은 효과가 확인됐다고 자동 실행하지 않는다. 실
 검수와 회귀 확인을 거친 뒤 필요한 최소 field만 schema owner `opod-service-backend`에
 제안한다. 정확한 DDL 대상·호환성·rollback을 별도 승인받는다. 적용은 기존 legacy 경로로 되돌릴
 수 있어야 하며, 새 feature flag나 영구 설정 체계를 미리 추가하지 않는다.
+
+### 11.6 목표 실행 재검증과 첫 구현 계약 M1 (2026-09-07)
+
+목표 전체는 10.6절이며 M1 완료로 축소하지 않는다. Persona 실험 S2~S4와 사용자 검수도 계속
+필요하다. M1은 새로 재현한 Memory 저장 입구의 결함을 다루며 P0 자연스러움 실패의 원인으로
+소급하지 않는다. 코드·테스트 수정 전 계약을 제시했고 후속 사용자 진행 지시(D15)로 구현·검증했다.
+
+#### 현재 상태에서 다시 확인한 증거
+
+- `npm run eval:memory-structure`: `STRUCTURE-PASS POLICY-FAIL` 재현. artifact는
+  `evals/results/2026-09-07T13-27-26-646Z/`다. lifecycle 표시는 fixture binding에만 남고
+  `setupMemoryFixture`→`NewMemory`→`ArchivalMemory` 저장 계약에는 전달되지 않는다. 그러므로
+  실제 망각 API가 작동하다 실패한 테스트가 아니라 **상태 계약과 처리 기능 부재**의 증거다.
+- `npm run eval:persona-router`: 합성 source 배치 통과. artifact는
+  `evals/results/persona-router-2026-09-07T13-27-27-043Z/`다. 실제 자연스러움은 미검증이다.
+- 기존 Memory/Persona/ChatService 관련 7개 테스트 파일 77건 통과. 현재 테스트가 green인 것이
+  아래 미지원 동작의 안전성을 뜻하지 않는다. 두 구조 CLI는 sandbox의 tsx 로컬 IPC 제한으로
+  첫 실행이 실패했고 권한 검토 후 재실행했다. 외부 모델·개발 DB 사용은 없다.
+- 기존 함수의 별도 합성 probe에서 일반 설명문이 observation 1건으로, 인용 없는 추론이
+  reflection 1건으로 파싱됐다. 두 결과는 실제 저장 호출과 Core 갱신 입력으로 이어질 수 있다.
+- 후속 격리 통합 probe에서 `ConsolidationService`가 일반 설명문을 실제 observation 1건으로
+  저장하고 importance 5를 누적하며 Summary의 `turnsCovered`를 1로 전진시켰다. `Reflector`도
+  무인용 추론을 저장하고 Core 재작성 prompt에 전달했다. 따라서 파서 반환값만의 문제가 아니다.
+  별도 provider stub의 `finish_reason=length` 응답도 `completeText`가 정상 텍스트로 반환했다.
+  이 probe는 기존 서비스·Store를 호출한 합성 진단이며 외부 호출·제품 코드 변경은 0건이다.
+- 같은 probe에서 직교 벡터의 무관 기억도 선택됐다. 높은 유사도의 서로 다른 거주 사실을
+  순서대로 저장하면 두 번째 저장은 0건이고 옛 사실은 남았다. 이는 합성 벡터로 재현한 현행
+  dedup 규칙의 한계이며 실제 embedding에서의 발생률 측정이나 정정 구현을 뜻하지 않는다.
+- 이 로컬 checkout에는 S1 snapshot과 실제 smoke 12회 artifact가 없다. Git이 제외한 원문을
+  가져오지 않았기 때문이다. 문서의 다른 환경 실행 이력은 보존하되 로컬에서 재검증했다고 쓰지
+  않는다. 원본 경로를 사용자에게 요청했고 완료된 12회를 자동 재생성하지 않았다.
+- schema owner의 checkout은 `schema.ts`와 DM worker 등에 다른 작업의 미커밋 변경이 있다.
+  M1에서는 backend/admin 파일을 건드리지 않는다. 후속 DDL 계약은 해당 변경과 조율해야 한다.
+
+#### M1: 잘못된 모델 출력을 사용자 기억으로 저장하지 않는다
+
+| 항목 | 이번 구현 계약 |
+| --- | --- |
+| 사용자 관측 결과 | 기억 추출기의 설명문·거절·손상 응답이 새로운 사용자 사실이 되지 않고, 출처 없는 성찰이 Archival/Core 입력으로 올라가지 않음 |
+| 기존 소유자 | `owner-found`: `src/memory/parsing.ts`의 `parseObservations`/`parseReflections`, `src/memory/complete-text.ts`의 `completeText`. 각각 정의와 consolidation/reflection 호출부를 확인. 별도 parsing·completion 계층을 만들지 않음 |
+| 모델 응답 완료성 | 공용 `completeText`에서 정상 완료 `stop`·문자열 content·거절/도구 호출 없음 확인. 잘린/거절된/누락된 응답은 content-free 오류. 정상 빈 문자열의 허용 여부는 단계별 parser가 결정하며, observation의 명시적 기억 없음은 `[]` |
+| Observation 입력 | JSON 배열과 단일 JSON 코드펜스만 허용. 항목은 비어 있지 않은 문자열 content와 1~10 정수 importance 필요. `[]`는 정상적인 기억 없음. 일반 문장·문자열 배열·손상 JSON·잘못된 항목은 임의 보정하거나 사실로 승격하지 않음 |
+| 실패 처리 | 잘못된 observation batch는 저장 전에 content-free 오류로 실패하고 기존 consolidation 단계/worker 재시도 경로를 사용. Summary watermark·importance·Core를 성공처럼 전진시키지 않음. 새 LLM 복구 호출은 추가하지 않음 |
+| Reflection 입력 | 비어 있는 출력은 성찰 없음. 성찰이 있으면 명시한 citation 형식과 실제 공급한 evidence 안의 유효한 번호가 필요. 인용 누락·0/범위 초과·일부만 유효한 인용은 전체 합성 응답을 거부하며, 그런 텍스트가 Core 재작성 입력으로 우회하지 못하도록 검증 |
+| 보존 | 정상 observation, 정상 cited reflection, 명시적 기억 없음, 관계 격리, 기존 멱등·재시도·Summary revision 계약. `parseLines`는 질문 목록용 기존 동작을 유지 |
+| 예상 코드·테스트 | `src/memory/parsing.ts`, `parsing.test.ts`, `consolidation.ts`, `consolidation.test.ts`, `reflection.ts`, `reflection.test.ts`, `complete-text.ts`, 신규 `complete-text.test.ts` |
+| 문서 | 이 계약·재검증 결과와 다음 세션 인계 갱신. 새 스키마나 별도 프레임워크는 추가하지 않음 |
+| 외부 작업 | 제품 수정은 로컬에서 진행. 격리 Store와 scripted provider로 검증하고 기존 로컬 DB 통합 검사도 실행했다. 개발 DB에는 별도 승인 범위의 캐릭터 source 읽기만 수행. DDL·유료 모델·개발 DB 쓰기·배포·push 없음 |
+| 범위 밖 | 정상 JSON 내용의 사실성 보장, 사용자 발화와의 의미적 증거 연결, 정정/망각 lifecycle, 중복 제거 정책, relevance threshold, Persona mapping/selector 확정. 이들은 최종 목표의 잔여 작업이며 M1 성공으로 완료 처리하지 않음 |
+
+관측된 두 parser 결함을 각각 실패 테스트로 고정하고 수정한다. 통합 검증은 실제
+`ConsolidationService`/`Reflector`→`StubMemoryStore` 경로에서 수행한다. 잘못된 추출에는 저장과
+요약 진전이 없고, 같은 작업의 정상 재시도에서는 유효한 기억이 한 번만 저장되어야 한다.
+잘못된 성찰에는 새 reflection/Core 쓰기가 없으며 기존 Core가 보존되어야 한다. 정상 cited
+reflection의 저장·Core 전달도 함께 검사해 전부 버리는 구현이 통과하지 못하게 한다.
+
+잘린 응답은 유효한 JSON처럼 보이더라도 정상 저장으로 진행할 수 없어야 한다. 이 검증은
+공통 completion 계약의 실패 경계와 consolidation의 미저장/재시도를 각각 확인한다.
+좁은 검증: `npm test -- src/memory/parsing.test.ts src/memory/consolidation.test.ts src/memory/reflection.test.ts src/memory/complete-text.test.ts`.
+구현 후 runtime/eval 전체 테스트·typecheck·lint·build와 두 구조 probe를 재실행한다.
+M1에서 lifecycle `POLICY-FAIL`이 계속되는 것은 남은 결함으로 보고하며 gate를 낮추지 않는다.
+후속 진행 지시로 구현을 끝냈다. M1 집중 검사 68건 통과, 잘못된 응답을 기본값으로 보정하던
+경로를 제거했다. 정상 추출·인용 성찰의 보존과 실패 후 재시도의 멱등성도 통과했다.
+
+### 11.7 후속 공통 구현과 실제 source 재확보 (2026-09-07)
+
+기존 승인 대기 문구는 역사적 기록이며 반복 승인을 요청하지 않는다. 자연스러움의 사용자 판정과
+미승인 외부 적용 경계는 유지한다. 이번에 완료한 세 범위는 아래와 같다.
+
+| 범위 | 변경·소유자 | 검증과 한계 |
+| --- | --- | --- |
+| M1 사용자 기억 저장 입구 | `parsing.ts`, `complete-text.ts`, consolidation/reflection의 응답 계약 | 잘못된 추출·불완전 응답·무인용 성찰의 저장 방지. 정상 JSON의 사실성, 정정/망각까지 해결하지 않음 |
+| S2 사전 선택 진단 경로 | `owner-found`: `evals/persona-comparison.ts` 정의·CLI 호출부와 기존 `PersonaBlockSelector` override를 확인해 확장. 별도 엔진 없음 | `selectorMode`와 case별 condition/character/source ID를 고정. oracle 모드는 모든 조합의 명시적 선택(빈 배열 포함)이 필요. 누락·중복·타 캐릭터·never/always·알 수 없는 ID를 모델 호출 전에 거부. 실제 자동 선택기 아님 |
+| C1 캐릭터 canon 읽기 구조 | `owner-found`: `PostgresPersonaStore`→`Persona`→`assembleSystemPrompt` 정의·호출부 확인. 기존 DB field를 보존하고 string adapter 호환 유지 | 4명/79건의 prompt byte 동일성, 로컬 DB의 microsecond 시각 정밀도·순서·soft delete·캐릭터 격리 통과. 전량 주입 정책·새 시각 정책·DDL은 미변경 |
+
+개발 서버의 기존 접속 설정을 따라 접근을 복구했고 **22:53:48 KST의 새 snapshot**을 얻었다.
+활성 캐릭터 4명/미삭제 Persona 45개/캐릭터 기억 79개이며 repeatable-read/read-only 트랜잭션은
+ROLLBACK으로 끝났다. 실제 사용자 대화·사용자 기억·인증 정보는 반입하지 않았다. source SHA-256:
+`86fa8b28b8d83f717026e6f001aadeca4942fbced2563692b65e782e9225a582`.
+
+새 자료는 `evals/results/character-source-recovery-2026-09-07/`에 격리했다. 원문·보고서 파일은
+0600, 디렉터리는 0700이고 Git에서 제외된다. 이전 S1 원문 분리 artifact와 완료된 실제 응답
+12건은 로컬 및 확인한 원격 작업 경로에서 찾지 못했다. 새 snapshot을 이전 15:22 snapshot과
+같다고 하지 않으며, 이 복구를 원래 12응답의 재검증이나 45/79건의 새 의미 전수 조사로 세지 않는다.
+
+실제 source 배치 검사는 4명의 검토한 background source ID를 각각 한 개씩 선택 후보로 두고,
+다른 41개 block과 canon 79개를 그대로 둔 **제한적 구조 진단**이다. 원문을 재작성하거나
+혼합 block 전체의 `retrieved` 정책을 채택한 것이 아니다. 기존 승인된 8개/22구간 분리를 대체하지
+않는다. 일부 fact는 canon에도 있으므로 이 검사만으로 필수 회상이나 최소 문맥을 증명할 수 없다.
+
+- 4명 × 7상황 × 2조건 = 합성 준비 56건, 외부 모델/embedding 0회.
+- 명시적 관련 질문의 해당 source 선택 4건, 대명사 후속 진단 2건, 중립/주제 종료 선택 0건.
+  후속 질문은 고정 prefix를 사람이 대신 지정한 oracle이며 자동 지시어 해소 성공이 아니다.
+- 캐릭터/조건별 stable hash 8개가 모든 상황에서 유지됐다. prompt 원문·이름·canon은 보존했다.
+- `oracle-preflight/`의 검수 파일은 합성 응답 표시가 있으며 인간 품질 검수에 사용하지 않는다.
+
+최신 회귀: runtime 323 통과/DB 조건부 15 skip, eval 91 통과. 기존 Memory DB 통합 14건과
+신규 canon DB 통합 1건은 로컬 DB에서 별도로 모두 통과했다. 코드 검사·build·dead-code 통과.
+이후 로컬 DB를 연결한 제품 전체 실행에서도 **338건 모두 통과**했다.
+runtime coverage 92.35%, 기존 eval coverage 범위 85.16%로 각 gate를 통과했다. eval 수치는
+설정된 scoring/schema 등 파일 범위이며 비교 CLI 전체의 coverage라고 주장하지 않는다.
+기억 구조 probe의 `POLICY-FAIL`은 남아 있다. 최종 G1~G7은 여전히 미검증이다.
+
+다음 실제 구현 경계는 사용자 Memory의 근거 연결과 정정/망각 lifecycle이다. 현재 Store에는
+해당 상태·API가 없고 fixture 표시는 저장되지 않는다. Archival만 걸러 성공 처리하지 말고
+Core/Summary/history/대기 job의 재유입과 관계 격리·원자적 완료를 포함해 계약을 세워야 한다.
+스키마 소유 backend의 기존 미커밋 변경을 보존하고 새 DDL·적용은 별도 권한 경계를 따른다.
+Persona의 실제 선택기 채택은 S2의 사용자 검수와 요인 분리 증거가 남아 있는 상태다.
+
+현재 읽기·저장 계약은 [적용 전략](persona-memory-plan.md)에 `repo-evidenced` 지식으로 반영했고,
+실험용 oracle ID/전체 background routing 후보는 제품 정책으로 승격하지 않았다.
+
+### 11.8 M2 — 겹치는 요약 작업의 중복 계산 방지 (2026-09-08)
+
+정정/망각의 재유입 경로를 조사하다 현재 작업 큐와 요약의 독립된 무결성 결함을 확인했다.
+하나의 4메시지 대화가 `[0,2)`, `[0,4)`인 서로 다른 두 job에 담기면 기존 코드가 watermark를
+6으로 기록했다. worker의 관계 lock은 동시 실행만 막고, 서로 다른 job ID의 내용 중복까지
+막지는 않는다. 실제 `ChatService.prepare/postTurn`→queue→`ConsolidationService` 재현과
+CAS 경쟁 재현으로 원인을 확인했으며 신뢰도는 `proven`이다.
+
+| 계약 | 범위·검증 |
+| --- | --- |
+| 관측 결과 | delayed/역순/재시도/CAS 경쟁에서 Summary가 실제 source 끝보다 앞서가지 않음. 다음 대화도 정상 요약 가능 |
+| 소유자 | `owner-found`: `decideConsolidation`/`ChatService.enqueueConsolidation`의 범위 계산·호출부, `ConsolidationRequest`의 producer/worker/HTTP 소비, `ConsolidationService.refreshSummary`와 Store CAS를 확인. 별도 큐나 요약 엔진 없음 |
+| 변경 파일 | `src/chat/consolidation-policy.ts`, `chat-service.ts`, `src/protocol/index.ts`, `src/memory/consolidation.ts`, 해당 policy/protocol/consolidation 테스트와 `consolidation-worker.test.ts`; `evals/target.ts`/`target.test.ts` |
+| 데이터 | 선택 필드 `turnsStartOffset`을 기존 job JSON에 저장. 안전한 정수와 user/assistant 메시지 좌표를 검증. schema/개발 DB는 미변경 |
+| 실패·호환 | 앞 범위가 비었으면 요약 단계 실패. 기존 CAS/재시도를 유지. offset 없는 legacy/manual job은 기존 경로. 이미 손상된 요약을 자동 삭제·복구하지 않음 |
+| 평가 | 기존 batched target이 겹치는 앞 job을 삭제하던 처리를 제거. 모든 job을 실행하고 queue policy 버전을 기록. 옛 batched 결과와 새 결과를 같은 조건으로 섞지 않음 |
+| 제외 | observation 재추출·Core의 오래된 사실 재유입, 실제 메시지 ID 추적, 의미적 정정/망각, 새 DDL, 유료 모델·배포·push |
+| 실행 경계 | 이 국소 수정의 추가 제품 선택 0개. D15/D16에 따라 반복 승인 질문 없이 진행. 실제 로컬 DB의 합성 테스트만 쓰고 생성한 데이터만 정리 |
+
+- [x] 생산자에서 겹치는 job을 만들고 순/역순에서 `turnsCovered=6`을 재현하는 실패 검사.
+- [x] source 시작 위치를 job에 전달하고 요약 시 미처리 suffix만 사용. fully covered no-op,
+  gap 실패/후속 정상 재시도, CAS 후 suffix 재계산, 다음 대화 연속성 검증.
+- [x] 실제 Postgres queue JSON→worker parser→Summary/operation 저장 경로에서 4/revision 2와
+  완료 payload 비우기를 확인. 테스트가 만든 행만 정리.
+- [x] 평가 전용 job 생략의 실패 검사를 먼저 확인하고 제거. 동일 source 처리를 사용.
+- [x] 최종 제품 344건(DB 통합 16건 포함), eval 92건 통과. runtime/eval typecheck, lint,
+  build, dead-code 통과. 기존 coverage 범위의 runtime 92.39%/eval 85.16%로 gate 통과.
+
+기억 유효성 probe는 여전히 `STRUCTURE-PASS POLICY-FAIL`이다. artifact는
+`evals/results/2026-09-07T23-53-09-361Z/`(2026-09-08 KST)이며 외부 모델 호출은 0회다.
+최종 G1~G7이나 자연스러움이 통과한 결과가 아니다.
+[구체적 재현·한계](reports/character-chat-summary-coverage-2026-09-08.md)를 기록했고
+현재 범위 계약은 [적용 전략](persona-memory-plan.md)에 반영했다.
+
+### 11.9 정정·망각의 남은 영속 경계 — 구현 미완료
+
+이번 조사에서 확인한 범위는 다음과 같다. 해결책을 기존 evidence 문자열이나 operation key에
+몰래 담아 우회하지 않는다. 아래는 필요 조건이며 새 schema·보존 정책 확정이나 DDL 승인이 아니다.
+
+| 경계 | 확인한 현재 상태 | 다음 구현에 필요한 보장 |
+| --- | --- | --- |
+| 원문 출처 | backend `message-reply.worker.ts`는 원본 message ID를 조회하지만 provider에는 role/content만 전달. Agent의 새 offset은 위치일 뿐 불변 출처 ID가 아님 | 사용자/캐릭터/세션으로 범위를 한정한 실제 메시지 출처와 기억의 연결. 재정렬·수정·삭제 후 위치를 출처 ID로 오인하지 않음 |
+| Archival | Store와 `agent_archival_memories`에 정정/망각 상태·API가 없음. 유사도 dedup은 충돌 사실도 버릴 수 있음 | 정정 전후 관계와 사용 가능 상태를 영속화. 의미적으로 비슷하다는 이유로 새 정정 사실을 버리지 않음 |
+| 파생 기억 | Core/Summary는 content 중심. 어떤 사실에 의존하는지와 유효성 세대가 없음 | 대상 기억 변경 후 파생 내용의 무효화/재생성. 보존해야 할 다른 사실을 함께 잃는 처리의 범위를 명시 |
+| 대기·실행 작업 | 기존 queue에 원문 payload가 있고 실행 중인 extraction/summary가 존재할 수 있음 | 정정/망각 이전에 읽은 작업이 완료 후 옛 사실을 재저장하지 못하게 하는 영속 장벽과 동시성 검사 |
+| 후속 history·답변 | backend가 기존 대화 내용을 다음 요청에 다시 보냄. 답변 저장도 별도 worker 경로 | 검색에서 제외하는 것뿐 아니라 history 및 이미 실행 중인 답변의 재노출을 완료 시점과 함께 처리 |
+
+schema owner는 `opod-service-backend/src/domain/database/schema.ts`, 앱 history owner는
+`src/domain/messages/message-reply.worker.ts`/`message-reply.provider.ts`다. 현재 이 backend의
+schema와 worker에는 다른 작업의 미커밋 수정이 있으므로 이번에 변경하지 않았다. 새 lifecycle
+영속 계약은 이 변경들을 보존하고 정확한 DDL/호환/rollback 범위를 제시한 뒤 진행해야 한다.
+Persona의 S2 사용자 검수·실제 선택기와 이 Memory 작업은 독립적으로 추적한다.
+
+### 11.10 M3 — 생성되지 않은 요약을 완료 처리하지 않기 (2026-09-08)
+
+후속 저장 경로 검토에서 빈 Summary 응답에도 기존 내용을 복사한 채 처리 위치가 전진하고,
+Core는 초과 응답을 문장 중간에서 잘라 저장하거나 빈 응답을 정상 종료하는 경로를 확인했다.
+후자는 reflection 예산 복구/재시도가 발생하지 않는다. 의미를 판단하는 새 judge를 만들지 않고
+기존 출력 계약의 실패를 저장 전에 처리하는 범위다. 자연스러움 개선 입증과 구분한다.
+
+- `owner-found`: `ConsolidationService.refreshSummary`/`Reflector.rewriteCore`의 저장 호출과
+  해당 Store·회귀 테스트를 확인했다. 빈 응답이 합법인 reflection synthesis와 공통
+  `completeText`는 유지하고 단계별 소유자에서 검증한다.
+- D15와 후속 끝까지 진행 지시에 따른 계약: `consolidation.ts`, `reflection.ts`와 해당 테스트,
+  기존 적용 전략·보고서·인계를 수정한다. Summary는 빈 응답이면 상태/처리 위치를 유지하고 실패,
+  Core는 빈 값/길이 초과면 기존 내용을 유지하고 실패한다. 정상 재시도는 기존 멱등성 경로를 쓴다.
+- 검증: 빈 Summary의 최초/기존 상태 보존과 동일 job 재시도, Core 빈 값/초과 값의 보존·예산
+  복구·재시도, 정확한 길이 한도의 정상 저장. 회귀 전체와 로컬 DB 통합을 다시 실행한다.
+- 외부 작업·DDL·배포·추가 유료 호출 없음. 형식이 정상인 내용의 사실성이나 정정/망각을
+  이 단계로 보증하지 않는다. 단순 잘라내기를 안전한 압축으로 취급하지 않는다.
+- 상태: 5건의 실패를 먼저 확인한 뒤 구현·재시도 검증 완료. 제품 전체 DB 포함 348건과 평가
+  92건, 당시 웹 37건 통과. 제품/평가/웹 타입 검사와 제품/웹 빌드, lint·dead-code 통과.
+  초기 웹 coverage 88.14%가 기존 90% 기준에 미달해 `npm run check`는 실패했다.
+  후속 11.12절의 실제 캐릭터 목록 계약 테스트를 추가한 뒤 전체 검사까지 통과했다.
+  웹 제품 소스·coverage 기준은 변경하지 않았다.
+  제품 coverage 92.40%와 기존 평가 범위 85.16%는 gate를 통과했다.
+
+### 11.11 실제 완료를 막는 후속 경계 (2026-09-08)
+
+**후속 우선순위 변경(D17):** 사용자가 정정·망각을 나중으로 미뤘다. 아래 DDL 설계는 보관하되
+직접 대화 개선의 선행 조건이나 현재 최우선 blocker로 다루지 않는다. 현행 작업은 11.13절이다.
+
+[완료 경계·DDL 검토 제안](reports/character-chat-completion-boundary-2026-09-08.md)에 새로
+필요한 상태/출처/세대 필드, mutation 원장, backend history와 답변 완료 경쟁의 처리,
+legacy 출처 미확보와 rollback의 한계를 정리했다. 이는 `recommended-unconfirmed` 설계이며
+미승인 migration을 작성·생성·적용하지 않았다. 이전의 일반 구현 승인 대기를 되살린 것이 아니라
+새 DDL의 distinct approval 경계다. 기존 backend의 qwen/DM 미커밋 변경은 그대로 보존했다.
+
+정정·망각 probe는 여전히 `POLICY-FAIL`이며 최신 결과는
+`evals/results/2026-09-08T00-09-09-239Z/`다. Persona 구조 회귀도 새로 통과했으나 합성 결과다.
+S2의 실제 응답 원문/사용자 판정과 조건을 통제한 신규 유료 실행, G7 서비스 적용 권한도 남아 있다.
+안전한 공통 구현을 마친 사실과 G1~G7 최종 완료를 분리하며 아직 모든 최종 gate는 미검증이다.
+
+### 11.12 검수 웹의 캐릭터 목록 계약 회귀
+
+전체 검사에서 기존 웹 coverage 미달을 발견했다. `owner-found`: `web/backend/characters.ts`의
+목록 함수와 `web/app/page.tsx`의 호출, backend 공개 `/characters`의 배열·active 캐릭터 계약을
+확인했다. 기존 route 테스트는 이 adapter를 검증하지 않았다. 새 `web/backend/characters.test.ts`는
+표시용 publicId를 Persona의 고유 ID와 혼동하는 회귀, 캐릭터 누락/순서 변경, 잘못된 행,
+미설정/서버 장애에서 수동 입력 fallback을 잃는 회귀를 보호한다. 단순 getter/상수 테스트는
+추가하지 않는다. 실제 웹 동작·UI·coverage 기준·dependency는 바꾸지 않는 테스트 전용 범위다.
+새 테스트와 전체 `npm run check`를 다시 실행한다. runtime 데이터 변경이나 사용자 자연스러움
+판정과 구분하고, 초기 coverage 실패 및 후속 결과를 모두 보존한다.
+결과: 신규 계약 5건 포함 웹 **42건**, coverage **93.55%**로 기존 gate 통과.
+전체 `npm run check`도 제품/평가/웹 회귀·coverage·타입·lint·dead-code·제품/웹 빌드까지 통과했다.
+별도 로컬 DB 제품 전체 **348건** 통과, 종료 후 큐 0행을 다시 확인했다.
+
+### 11.13 N1 — 직접 대화 지침 충돌 수정 (2026-09-08)
+
+사용자의 D17 요청으로 저장/DDL 조사를 중단하고 실제 답변 입력의 충돌을 먼저 처리했다.
+`owner-found`: `system-prompt.ts`/`turn-context.ts`와 `ChatService.prepare`의 실제 조립,
+`bond.ts`의 recency 계산, 관련 회귀를 교차 확인했다. 새 snapshot의 4/45/79 원문도 전수 확인했다.
+
+구현 계약: 두 prompt owner와 세 회귀 파일에서 공통 사용 지침만 수정한다. 친밀도를 근거로
+근황·질문·현재 감정·오랜 인연·반말을 강제하지 않고, 시각으로 계절/일정 화제를 만들지 않는다.
+예시와 게시물 제작 지침은 실제 DM/현재 활동의 증거와 구분한다. 추론은 추론으로 표시하고
+최근 대화와 단답의 의미를 이어 읽는다. 캐릭터의 의견·취향·장난을 살리되 고정 문장 수는 없앤다.
+DB 원문·모델·XP·검색/Router·context 위치·저장 구조는 유지한다. 캐릭터별 분기/정답 문장은 없다.
+
+상태: 실패 14개 확인 → 직접 관련 회귀 69개 통과. 실제 HTTP 조립으로 4명×4문맥의 전후
+입력 32개를 포착하고 source/실제 발화/모델 설정 보존을 확인했다. 실모델 답변은 0개다.
+신규 최대 32답변/$1 실행은 자동 승인 검토에서 비공개 입력의 외부 전송·비용 범위 미확인으로
+차단됐고 우회하지 않았다. 제품 로컬 DB 포함 358건 통과. 자연스러움은 미검증이다.
+최종 `npm run check`도 통과했다. 평가 92건·웹 42건, 기존 coverage 기준, 타입·lint·dead-code,
+제품/웹 빌드를 모두 포함한다. 샌드박스의 로컬 mock 포트 제한은 로컬 검사 권한으로 재실행했다.
+[수정·검증·남은 실행 범위](reports/character-chat-direct-naturalness-2026-09-08.md)에 상세 기록했다.
+이 작업은 D6 중 직접 충돌하는 말투 지침을 D17 범위로 처리한 것이며, 친밀도 산식이나 새로운
+Current State 정책을 승인한 것으로 확대하지 않는다. DDL 보류를 다시 일반 구현 중단 사유로 쓰지 않는다.
+
+### 11.14 N1 실제 답변 비교 — 사용자 승인 후 32회 완료
+
+D18 승인 범위에서 실제 HTTP 조립을 포착해 둔 provider 요청 32개를 기존 provider로 재생했다.
+원문/요청 hash와 설정 동일성을 확인했고 4명×4문맥×전후 2조건을 재시도 없이 실행했다.
+청구액 $0.034232076, 응답 32개 모두 지정 Xiaomi 제공사와 모델·정상 종료·본문을 확인했다.
+8쌍씩 두 묶음의 같은 캐릭터 조건 가림 검수를 제공한다. 새 제품 코드·DDL·배포는 없다.
+
+32개 모두 reasoning payload가 있으나 usage의 reasoning_tokens는 0이다. 추론 비활성화를
+검증한 것으로 쓰지 않는다. 관계 태그 15개 누락과 조건별 캐시 차이도 보존한다. 단기 provider
+완료 지연은 앱 p95나 G7이 아니며 생성 성공을 자연스러움 성공으로 승격하지 않는다.
+[N1 후속 실행 기록](reports/character-chat-direct-naturalness-2026-09-08.md#후속-승인-실행-결과)에
+비용·지연·검수 파일·제한을 남겼다. 현행 다음 단계는 사용자 원문 판정이며 추가 유료 실행은 없다.
+후속 전체 `npm run check`와 모바일/데스크톱·밝은/어두운 테마의 64개 pair 화면 확인을 통과했다.
+원문 일치·부분 판정의 미검수 유지·전송 실패 대안을 검증했으며 실제 사용자 판정은 작성하지 않았다.
+
+D19 원격 접근 요청 후 [본인 전용 검수 링크](https://opod-chat-review-sep08.mute1478.chatgpt.site)를
+게시했다. 이는 기존 화면의 독립 export이며 OPOD 제품 배포가 아니다. 원문·조건 가림을 보존하고,
+브라우저별 초안을 복사해 이 대화에 제출한다. 사용자 판정 대기와 추가 유료 실행 없음은 유지한다.
+
+### 11.15 사용자 검수 접수 — 선택과 개별 합격을 분리
+
+D20에서 기존 16쌍의 사용자 선택·코멘트를 접수했다. 원본의 draft 상태와 개별 32대화의
+not-reviewed를 보존하고, 전후 매핑 확인과 기존 검수 회귀 5건을 통과했다.
+수정 전 선호 5쌍/후 선호 4쌍, 둘 다 부적절 4쌍, 비슷함 1쌍, 판단 보류 2쌍이며,
+이 수치를 합격률·전반적 개선으로 바꾸지 않는다. [상세 기록](reports/character-chat-direct-naturalness-2026-09-08.md#사용자-검수-반영--d20).
+
+사용자는 갑작스러운 반말, 문맥 불일치, 캐릭터 부적합, 일상적이지 않은 단어·어투를 지적했다.
+‘일 얘기는 됐고’에 대한 반응은 성격에 따라 다르며 인사는 친밀도에 따라 달라질 수 있다는
+경계를 함께 남겼다. 따라서 모든 캐릭터의 반응을 같게 만들거나 화제 전환에 무조건 순응,
+무조건 서운함, 모든 혼용 금지, ‘ㅎㅇ’ 일괄 복제를 확정하지 않는다. 이번 요청에서는 기록만
+반영했으며 제품 변경·새 유료 비교·DB 변경·배포는 없다. 과거의 검수 대기 기록보다 D20이 최신이다.
+
+### 11.16 N2 — 검수 근거를 공통 입력·반응 지침에 반영
+
+기존 공통 prompt를 소유한 두 파일에서 참조 자료와 실제 교환의 경계를 표시하고 화제 전환의
+일괄 순응, 사용자 축약형만으로 말투 전환, 배경 용어의 DM 전이, 정형 인사 전제를 수정했다.
+설정 예시와 실제 출력의 정확한 일치를 확인했지만 인과 원인이나 해결의 증거로 확대하지 않는다.
+자료·예시 미주입/삭제, 제목 기반 분류, 특정 캐릭터용 답변, Memory schema 변경은 하지 않았다.
+
+네 캐릭터×네 문맥 전후 32개의 실제 HTTP 조립 입력을 비교했다. N1 후 입력과 N2 전 입력은
+동일하고 주입 41블록·79canon과 history·설정은 보존됐다. 요청당 1,749 byte 증가는 토큰·비용
+측정이 아니다. 관련 69건과 전체 검사(제품 342/DB 16 skip, 평가 92, 웹 42)를 통과했다.
+[N2 상세·잔여 검증](reports/character-chat-direct-naturalness-2026-09-08.md#n2--검수-후-공통-입력-구성반응-지침-수정).
+상태는 구현/구조 검증 완료이며 실제 품질은 미검증이다. D20의 판정은 바꾸지 않았고 새 유료
+실행 계약 없이 기존 32회 승인을 재사용하지 않는다. 정정/망각·DDL 보류도 유지한다.
+
+### 11.17 D22 — 새 승인 비교의 부분 실행
+
+N1 이후 N2의 실제 응답을 확인할 새 32답변/$1 계약이 승인됐다. 고정한 provider 요청을 순서대로
+재생해 8개 본문을 얻은 뒤 9번째 요청 시간 초과로 중단했다. 무재시도·중단 규약을 유지해
+미시도 23개는 실행하지 않았다. 확인 청구 $0.01995432와 미확인 시간 초과 건을 구분한다.
+실행 경로는 `evals/results/direct-naturalness-n2-approved-2026-09-08/`이며 완료 표시는 없다.
+
+권도건 인사·서린 현재 근황·나희 알람 동의·한소이 현재 근황의 4쌍을 단일 새 packet으로 만들었다.
+새 8답변은 모두 미검수이며, 특히 화제 중단 반응 비교는 확보하지 못했다. 기존 N1 사용자 판정은
+hash까지 보존했다. 원문/짝/미검수·비용·권한 검사, 기존 검수 5건·관계 태그 처리 13건 회귀와
+두 검수 화면의 비브라우저 기능 검사·빌드가 통과했다. 생성 성공·테스트 통과는 자연스러움
+합격이나 최종 G1~G7 통과가 아니다. 제품 추가 변경·DB 쓰기·DDL·제품 배포는 없다.
+[실행 범위·잔여 검증](reports/character-chat-direct-naturalness-2026-09-08.md#d22--n1-대-n2-승인-실행-시간-초과와-부분-결과).
+[본인 전용 N2 부분 검수](https://opod-chat-review-sep08.mute1478.chatgpt.site/n2.html)에 4쌍 게시를
+완료했다. 기존 N1 화면과 판정은 그대로이며, 새 답변에 대한 판정만 별도로 받는다.
+
+### 11.18 D23 — N2 부분 결과의 사용자 검수 접수
+
+`packet-e314b9acb491`의 4쌍 선택은 서린 현재 근황 A(N2), 한소이 현재 근황 B(N2),
+나희 알람 동의 both_bad(“둘다 문맥이 이상함”), 권도건 인사 A(N1)다. 조건 연결은 기존 key와
+원문으로 확인했다. 추가 코멘트 없는 세 선택의 이유나 개별 합격 여부를 추정하지 않는다.
+제출은 draft이고 개별 8답변 모두 not-reviewed다. 선택을 PASS로, both_bad를 개별 FAIL로
+변환하지 않으며 N1 1/N2 2의 단순 선호 수를 전반적 개선이나 채택 근거로 확대하지 않는다.
+
+실행 디렉터리에 새 제출 원본·검증 영수증을 별도 보존했다. 기존 스키마와 조건 가림 연결,
+미검수/draft 경계, 기존 artifact와 D20 제출 hash 불변, 검수 회귀 5건을 확인했다.
+이번 요청은 기록 반영만 수행했으며 제품/평가 코드 변경·모델 호출·DB 변경·웹 재게시·push는 없다.
+전체 32답변 비교와 화제 중단 문맥은 계속 미완료다. 이전 검수 대기 문구보다 이 접수가 최신이다.
+[접수 원본·매핑·해석 경계](reports/character-chat-direct-naturalness-2026-09-08.md#d23--n2-부분-결과-사용자-선택-접수).
+
+### 11.19 D24 — N3 배치 단일변수 후보
+
+N2의 나희 문맥 지적을 해결됐다고 처리하지 않고 공통 배치를 분리해 확인할 후보를 구현했다.
+기존 `withTurnContext`에서 `[사용자 발화 + 배경]`을 `[배경 + 사용자 발화]`로 바꿨다.
+고정 system·이전 대화·N2 지침·Persona/canon·메시지 역할·모델 설정은 그대로이며 새 지침이나
+정답 예문은 없다. context와 user가 한 메시지 안에 있다는 기존 역할 한계도 남는다.
+
+실제 HTTP 조립 입력 16쌍은 N2 후=N3 전, 순서 외 차이 없음, 크기 변화 0byte를 확인했다.
+관련 87건·전체 검사(제품 343/DB 16 skip·평가 92·웹 42) 통과. D20/D23 제출은 보존했다.
+배치와 자연스러움의 인과 신뢰도는 unknown이며 실제 답변 생성/사용자 검수는 아직 없다.
+상세는 [N3 기록](reports/character-chat-direct-naturalness-2026-09-08.md#d24--n3-마지막-발화를-배경-뒤에-두는-단일변수-후보),
+입력은 `evals/results/direct-naturalness-n3-offline-2026-09-08/`다.
+다음 실제 비교는 별도 32답변/$1 외부 전송 범위 확인 후 실행하며, 중단된 D22 run을
+재개하거나 이전 사용자 선택을 N3 품질 판정으로 재사용하지 않는다. 제품은 미배포 후보다.
+
+### 11.20 D25 — N2·N3 실제 답변 비교 완료, 사용자 검수 전
+
+새 명시적 실행 범위에 “진행해” 승인을 받아 고정 입력 32개를 실행했다. 32개 모두 Xiaomi·
+정상 종료·본문 확보, 총 $0.023467782, 재시도/추가 호출 0이다. D24의 단일 배치 차이만
+비교하며 새 지침·Persona 수정·제품 배포는 없다. 양 조건 120초 제한으로 과거 D22의 60초
+중단 run과 별개다. 기존 snapshot을 사용했고 실제 사용자 데이터 전송·DB 변경·DDL은 없다.
+
+원문·비용·입력 hash·32답변/16쌍 매핑·기존 사용자 제출 불변을 검증했다. 관계 태그 21건 누락,
+reasoning payload 32건/보고된 reasoning_tokens 0이라는 계약·관측 한계는 그대로 남긴다.
+개별 32답변·16쌍 모두 미검수, 자동 자연스러움 판정은 없다. 8쌍씩 새 두 packet으로
+[본인 전용 원문 검수](https://opod-chat-review-sep08.mute1478.chatgpt.site/n3.html)에 연결했다.
+기존 N1/N2 페이지·사용자 선택은 유지하며 과거 선호를 새 답변 PASS로 옮기지 않는다.
+검수/태그 회귀 5+13건, 사이트 세 회차 동작·원문/빌드 확인. 제품 전체 검사는 D24 이력이다.
+실행 상세와 잔여 위험은 [D25 보고서](reports/character-chat-direct-naturalness-2026-09-08.md#d25--n2n3-고정-입력-실제-비교)에 있다.
+실험 실행 완료일 뿐 가설 확정·품질 향상·G1~G7 달성이 아니다. 다음 증거는 새 packet의 사용자 선택이다.
+
+### 11.21 D26 — 사용자 검수 접수와 페르소나 진단
+
+두 packet의 선택15건과 미검수 상태의 코멘트1건을 받았다. N2 선호3/N3 선호6, both_bad3,
+tie1, abstain2이며 나머지1쌍은 not-reviewed다. 개별32답변은 전부 not-reviewed, 두 제출은
+같은 사용자1명의 draft다. 특히 코멘트만 있는 항목을 both_bad로 만들거나 선호를 PASS로
+해석하지 않는다. [원본 연결과 모든 코멘트](reports/character-chat-direct-naturalness-2026-09-08.md#d26--n2n3-사용자-검수-접수와-캐릭터성-진단)는 D26 보고서에 있다.
+
+‘캐릭터들의 성격이 두드러지지 않는다’는 사용자 관찰을 별도 보존했다. 기존 source에는
+반응 차이가 있으나 지적된 인사·셀렉 표현이 예시에도 남아 있고, 이번 입력에는 greeting 외
+모든 블록이 항상 주입된다. ‘더 많은 설정’만으로 해결할 근거는 없다. 공통 정책의 평준화
+영향은 미검증이며, DM용 판단·감정·관계 변화와 제작 지침/예시를 구분하는 보완을 제안한다.
+검수의 이름-only 설명과 관계 정보 부재, 짧은 고정 문맥·사용자 장기 기억 없음도 한계다.
+이는 아직 승인된 새 구현/유료 실험 계약이 아니다. 기존 응답이나 판정을 소급 고치지 않는다.
+원본/스키마/매핑/기존 hash 보존·검수 회귀5건 검증, 제품/페르소나/DB/웹 변경과 새 호출 없음.
+
+### 11.22 D27 — N4 예시 주입 조건과 검수 설명 준비
+
+사용자 “진행해”로 분류·실험 설정 구현·로컬 검증을 진행했다. 45블록의 용도를 목록화하고
+기존 명시적 ID 라우터를 재사용해 독립 examples 4블록만 주입에서 제외했다. 원문 재작성,
+혼합 블록 분해, 성격 보강, 제작 지침 제외는 이번 변수가 아니다. 원본45/canon79와 양쪽
+성격·말투·공통 정책·N3 배치를 유지했다. 모든 예문이나 어색한 어휘가 제거됐다고 주장하지 않는다.
+
+실제 HTTP에서 포착한 16쌍 입력은 전 조건=N3 후 조건, 후 조건=독립 예시 섹션 하나 제거 외
+전체 동일함을 확인했다. `evals/results/direct-naturalness-n4-offline-2026-09-08/`에 보존했다.
+새 검수는 원문 구간/hash가 있는 기존 성격 발췌와 합성 관계·문맥 설명을 기존 personaBrief로
+전달한다. 모델 입력에는 넣지 않으며 새 성격/정답 힌트가 아니다. 기존 Site 구성·스키마를
+재사용했고 N1/N2/N3 화면 및 이전 사용자 제출3개는 불변이다. 아직 새 페이지를 게시하지 않았다.
+
+`npm run check` 통과(제품343/DB16 skip·평가92·웹42), 사이트 네 검사/빌드·입력 및 발췌
+독립 대조 통과. 실제 모델 응답은 0개이며 자연스러움/개성 효과는 미검증이다. 첫 실제 비교
+예정은 네 캐릭터 모두 같은 present 질문4쌍/8답변으로 사전 고정했다. 이번 준비 승인을
+유료 실행/외부 전송/게시/제품 적용으로 확장하지 않는다. 성격 본문 보강은 결과와 별도 변수다.
+상세 승인 경계·검증·한계는 [D27 보고서](reports/character-chat-direct-naturalness-2026-09-08.md#d27--n4-예시-주입-단일변수-준비와-검수-설명-보완)를 따른다.
+
+### 11.23 D28 — 공식 레퍼런스 재확인과 실제 Persona·Memory 읽기 구조 변경
+
+사용자는 다른 서비스의 레퍼런스를 찾아 **구조를 수정**하도록 요청했다. D27의 용도 목록과
+독립 예시 제외만으로는 혼합 본문/기억 회수가 달라지지 않았으므로, 이번에는 공통 제품 경로를
+수정했다. 앞선 추가 질문 없이 진행하라는 지시에 따라 범위를 알린 후 구현·검증했으며,
+이를 새 유료 실행·DDL·개발 DB 쓰기·배포 승인으로 확장하지 않았다.
+
+#### 다시 확인한 1차 자료와 채택 경계 — 2026-09-08 접속
+
+| 서비스/도구 | 공식적으로 공개한 구분 | 이번 OPOD 반영 / 반영하지 않은 것 |
+| --- | --- | --- |
+| Character.AI | Definition의 정체성·성격·감정 논리·대화 예시. Story Memory/pin과 자동 Facts의 구분 | 성격의 판단/반응을 유지하고 작성된 canon과 사용자 학습 기억을 분리. 예시가 무조건 해롭다는 결론은 아님 |
+| Kindroid | Backstory, Response Directive, Key Memories, Example Message; persistent/cascaded/retrievable memory와 keyphrase Journal | 상시 성격과 필요한 배경/사건을 구분. 주제를 꺼내게 하는 지침을 늘리기보다 자료를 선택. 자체 학습/장기 회수 알고리즘을 복제했다는 주장은 하지 않음 |
+| Nomi | creator Shared Notes, 변화하는 Identity Core, 세부 기억과 개념을 보는 Mind Map | 작성자 설정과 학습된 사용자별 기억의 소유권을 유지. 한 사용자 대화로 공용 캐릭터 성격을 자동 덮어쓰지 않음. 그래프 DB 도입은 보류 |
+| SillyTavern | description/personality/scenario, greeting, example messages와 creator metadata의 다른 용도; World Info의 조건부 활성화 | 본문을 실제 구간으로 나누고 명시적 회수어로 lore를 선택. 내부 코드는 이번에 확보하지 못했으며 공식 문서 근거만 사용 |
+| AI Dungeon | overview인 Summary와 필요한 세부를 찾는 Memory Bank, 필수/동적 context 구분 | 저장돼 있다는 이유로 모든 사건을 주입하지 않음. 제품의 특정 예산 비율을 DM의 최적값으로 가져오지 않음 |
+| Letta V1 문서 | label/description/value/limit를 갖는 memory block과 read-only 옵션 | 정보별 용도와 쓰기 권한을 구분한다는 설계 근거만 사용. 해당 링크는 **V1 legacy**이며 현행 SDK 구현 권장으로 오인하지 않음 |
+
+출처: Character.AI [Character Definition](https://support.character.ai/hc/en-us/articles/50609183646875-5-Character-Definition),
+[Memory](https://blog.character.ai/memory/);
+Kindroid [Personality](https://kindroid.ai/v2/docs/customizing-personality/),
+[Memory](https://kindroid.ai/v2/docs/memory/), [Ember guide](https://kindroid.ai/v2/docs/ember-llm-guide/).
+Nomi [Identity Core](https://nomi.ai/updates/introducing-the-nomi-identity-core-fostering-dynamic-and-authentic-identities/),
+[Mind Map 2.0](https://nomi.ai/updates/mind-map-2-0-bringing-nomi-memory-into-view/).
+SillyTavern [Character design](https://docs.sillytavern.app/usage/core-concepts/characterdesign/),
+[World Info](https://docs.sillytavern.app/usage/core-concepts/worldinfo/).
+AI Dungeon [Memory System](https://help.aidungeon.com/faq/the-memory-system),
+[Context](https://help.aidungeon.com/faq/what-goes-into-the-context-sent-to-the-ai).
+Letta [V1 Memory Blocks](https://docs.letta.com/v1-sdk/memory/memory-blocks).
+
+폐쇄형 서비스의 저장 테이블, 내부 prompt, score나 실제 자연스러움은 이 자료로 확인할 수 없다.
+OPOD의 **구간 분리/회수어/상한4/관련도 하한0은 OPOD용 구현 판단**이며 경쟁 서비스의 검증된
+최적값이 아니다. 각 서비스의 자기소개적 품질 주장을 비교 점수로 사용하지 않았다.
+
+#### 구현 결과와 범위
+
+- 기존 `evals/persona-source-projection.ts`의 무손실 구간 분리를 제품의
+  `src/persona/persona-source-projection.ts`로 옮겼다. eval은 재수출하고 공통 소유자를 사용한다.
+  source hash/UTF-8 연속 구간/전량 재결합 검사로 원문이 사라지거나 잘못된 버전에 적용되는 것을 막는다.
+- `RoutedPersonaStore`가 명시적 ID manifest로 본문을 분해한다. 성격/반응/DM 말투는 상시,
+  배경/외형/업무 상세는 조건부, 제작 지침과 독립 예시는 DM 제외다. 혼합 relationships의
+  사용자 관계 경계는 상시에 남기며 관계 인물 정보만 lore로 분리했다. 새 성격/정답 문장은 추가하지 않았다.
+- authored canon에 `kind=fact|event`, `injection=always|retrieved`, `recallKeys`를 붙이고
+  기존 ID/content/type/reason/timestamps를 보존했다. 원래 routine/preference/goal 타입을
+  지우지 않으며 여기서 fact는 비사건성 작성 사실의 큰 분류다. 과거 사건의 상시 주입은 거부한다.
+- selector는 이미 조건부로 분류된 **해당 캐릭터** 자료만 현재 사용자 발화의 명시적 회수어와
+  대조한다. lore 최대4 + canon 최대4, 순서 고정, 미일치면0이다. 회수는 turn context에만
+  들어가고 상시 system hash는 유지된다. authored 기억과 사용자 관찰/추론은 다른 섹션이다.
+- 사용자 archival 기억은 기존 공통 순위 계산에 raw cosine 하한을 추가했다.
+  실제로는 점수를 계산한 뒤 하한에 통과한 후보만 top-K를 채우고, 탈락 후보는 접근 시각도
+  갱신하지 않는다. 기본0은 **0 이하 차단**이지 의미적으로 무관한 모든 문장을 판별하는 값이 아니다.
+  Stub/Postgres 내장 store가 적용하며 외부 adapter는 새 옵션 계약을 따라야 한다.
+
+새 환경변수 `PERSONA_ROUTING_MANIFEST_PATH`로 이 읽기 구조를 연결할 수 있다. 실제 `.env`나
+운영 설정은 바꾸지 않았다. 경로를 지정하지 않으면 Persona는 legacy 동작이고, 기억 관련도
+하한은 새 container 기본값0이다. DB 테이블/원문, core·summary 저장, 정정·망각은 바꾸지 않았다.
+
+네 캐릭터의 원문45블록 중 **15개를40구간으로 실제 분할**, 나머지30개와 합쳐70개 투영 블록을
+만들었다. canon79는 상시11/조건부68이며 과거 사건26개는 모두 조건부다. 입력48건에서
+제작 지침 제외, 사건 관련 회수/주제 종료 시 회수 해제, 원문·메타데이터 보존을 확인했다.
+전체 `npm run check`: 제품353 통과/DB16 skip·평가93·웹42 통과. 실제 모델 답변0,
+사용자 판정 추가0이다. 상세 분류·비교·제약은
+[D28 보고서](reports/character-chat-direct-naturalness-2026-09-08.md#d28--레퍼런스-기반-실제-personamemory-분리)에 있다.
+
+이 작업은 여러 구조를 함께 바꾼 구현 검증이다. N3/N4 단일변수 품질 실험으로 부르거나
+특정 요소의 효과를 추정하지 않는다. 다음 실제 비교는 Persona 분리만/캐릭터 canon 회수만/
+사용자 기억 gate만/결합 조건을 구분하고, 성격·관계·앞선 대화를 함께 제시해야 한다.
+앞서 미실행인 N4 artifact와 사용자 draft/not-reviewed는 그대로 보존했다.
+
+### 11.24. D29 — 승인된 DDL과 실제 로컬 DB 검증
+
+2026-09-08 사용자의 DB 변경·테스트/DDL 명시 승인으로 D28의 읽기 전용 분리 구조를
+실제 저장 구조로 옮겼다. 원문45개는 유지하고 child table에70조각, canon79개에는
+분류·주입 정책·회수어를 저장한다. schema/migration은 backend 정본, admin은 mirror/API,
+agent는 DB reader와 기존 Router를 소유한다. 특정 캐릭터 runtime 분기는 없다.
+
+새 로컬55433 DB에서 실제 관리자 API124회, 대화 입력12건과 DB 재시작 후12건을 확인했다.
+원문 무손실, 원자 수정/충돌409/실패 rollback/캐릭터 격리 및 실제 DB를 포함한1174테스트 통과.
+기존 로컬5433/개발 DB/사용자 제출은 변경하지 않았다. 실제 모델/사용자 판정은 추가0이다.
+저장 구조가 동작한다는 근거이지, 각 분류나 자연스러움 개선의 품질 판정은 아니다.
+시각적 편집기는 없으며 구조화된 본문은 새 API로 원문+조각을 함께 저장해야 한다.
+자세한 스키마·API·호환성·재현/다음 실험은 [D29 보고서](reports/character-context-local-db-2026-09-08.md).
+앞선 D28의 “DDL 없음/manifest에만 저장”은 해당 단계의 이력으로 보존한다.
 
 ## 12. 채택하지 않을 접근
 

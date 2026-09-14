@@ -19,12 +19,12 @@ interface ClaimedJob {
   id: string;
   user_id: string;
   character_id: string;
-  payload_json: unknown;
+  consolidation_request: unknown;
   attempt_count: number;
 }
 
 /**
- * In-process consumer of the durable opod.agent_memory_jobs queue. ADR-0004
+ * In-process consumer of the durable opod.chat_memory_consolidation_jobs queue. ADR-0004
  * planned an external opod-worker calling /memory/consolidate; until that
  * service exists the Agent hosts the loop itself (docs/persona-memory-plan.md
  * Phase 4 — the same in-process-worker rule the admin pipeline follows).
@@ -92,27 +92,27 @@ export class ConsolidationWorker {
   /** Claims and processes one job. Returns false when nothing is claimable. */
   async tick(): Promise<boolean> {
     const claimed = await this.pool.query<ClaimedJob>(
-      `UPDATE opod.agent_memory_jobs
-       SET status = 'running',
-           lease_expires_at = now() + make_interval(secs => $1 / 1000.0),
+      `UPDATE opod.chat_memory_consolidation_jobs
+       SET processing_status = 'running',
+           processing_lease_expires_at = now() + make_interval(secs => $1 / 1000.0),
            attempt_count = attempt_count + 1,
            updated_at = now()
        WHERE id = (
-         SELECT id FROM opod.agent_memory_jobs
-         -- queued rows may carry a retry-backoff "not before" in lease_expires_at
-         WHERE (status = 'queued' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
-            OR (status = 'running' AND lease_expires_at < now())
+         SELECT id FROM opod.chat_memory_consolidation_jobs
+         -- queued rows may carry retry backoff in processing_lease_expires_at
+         WHERE (processing_status = 'queued' AND (processing_lease_expires_at IS NULL OR processing_lease_expires_at < now()))
+            OR (processing_status = 'running' AND processing_lease_expires_at < now())
          ORDER BY created_at ASC, id ASC
          LIMIT 1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, user_id, character_id, payload_json, attempt_count`,
+       RETURNING id, user_id, character_id, consolidation_request, attempt_count`,
       [this.config.leaseMs],
     );
     const job = claimed.rows[0];
     if (!job) return false;
 
-    const parsed = ConsolidationRequest.safeParse(job.payload_json);
+    const parsed = ConsolidationRequest.safeParse(job.consolidation_request);
     if (!parsed.success) {
       // A malformed payload can never succeed — fail it permanently.
       await this.finish(job.id, "failed", `invalid payload: ${parsed.error.message}`);
@@ -131,9 +131,9 @@ export class ConsolidationWorker {
       // Another instance is consolidating this relationship. Put the job back
       // behind the retry backoff without spending an attempt.
       await this.pool.query(
-        `UPDATE opod.agent_memory_jobs
-         SET status = 'queued',
-             lease_expires_at = now() + make_interval(secs => $2 / 1000.0),
+        `UPDATE opod.chat_memory_consolidation_jobs
+         SET processing_status = 'queued',
+             processing_lease_expires_at = now() + make_interval(secs => $2 / 1000.0),
              attempt_count = attempt_count - 1, updated_at = now()
          WHERE id = $1`,
         [job.id, this.config.retryDelayMs],
@@ -154,10 +154,10 @@ export class ConsolidationWorker {
       } else {
         // Back to queued behind a retry backoff; a later tick retries it.
         await this.pool.query(
-          `UPDATE opod.agent_memory_jobs
-           SET status = 'queued',
-               lease_expires_at = now() + make_interval(secs => $2 / 1000.0),
-               error_message = $3, updated_at = now()
+          `UPDATE opod.chat_memory_consolidation_jobs
+           SET processing_status = 'queued',
+               processing_lease_expires_at = now() + make_interval(secs => $2 / 1000.0),
+               last_error_message = $3, updated_at = now()
            WHERE id = $1`,
           [job.id, this.config.retryDelayMs, message],
         );
@@ -214,10 +214,10 @@ export class ConsolidationWorker {
     // doesn't linger in the queue. Failed jobs keep theirs: the payload is the
     // only reprocessing unit if a systemic failure is fixed later.
     await this.pool.query(
-      `UPDATE opod.agent_memory_jobs
-       SET status = $2, lease_expires_at = NULL, error_message = $3, updated_at = now(),
-           payload_json = CASE WHEN $2::opod.agent_job_status = 'completed'
-                               THEN '{}'::jsonb ELSE payload_json END
+      `UPDATE opod.chat_memory_consolidation_jobs
+       SET processing_status = $2, processing_lease_expires_at = NULL, last_error_message = $3, updated_at = now(),
+           consolidation_request = CASE WHEN $2::opod.chat_memory_consolidation_job_status = 'completed'
+                               THEN '{}'::jsonb ELSE consolidation_request END
        WHERE id = $1`,
       [id, status, error],
     );

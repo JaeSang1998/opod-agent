@@ -107,14 +107,14 @@ describe("transcriptOf", () => {
 describe("withTurnContext", () => {
   const block = "<context>\n\n# Current moment\nIt is late.\n\n</context>";
 
-  it("appends the block to the last user message", () => {
+  it.each(["second", "  second\n<context>literal user text</context>\n  "])("keeps the exact latest user text after the context: %j", (latest) => {
     const messages: ChatMessage[] = [
       { role: "user", content: "first" },
       { role: "assistant", content: "reply" },
-      { role: "user", content: "second" },
+      { role: "user", content: latest },
     ];
     const out = withTurnContext(messages, block);
-    expect(out[2]?.content).toBe(`second\n\n${block}`);
+    expect(out[2]?.content).toBe(`${block}\n\n${latest}`);
     // Everything before it is byte-identical, which is the point: the prefix
     // through the whole history stays cached.
     expect(out.slice(0, 2)).toEqual(messages.slice(0, 2));

@@ -11,6 +11,7 @@ import { noopLogger } from "../bootstrap/logger.js";
 import type { ChatCompletionRequest } from "../protocol/index.js";
 import { BOND_XP_BY_GRADE } from "../memory/bond.js";
 import type { Persona } from "../persona/persona.js";
+import { PersonaContextIntegrityError, type PersonaStore } from "../persona/persona-store.js";
 
 const config = {
   retrieveTopK: 6,
@@ -86,12 +87,142 @@ const body: ChatCompletionRequest = {
 };
 
 describe("ChatService.prepare", () => {
+  it.each([false, true])("uses runtime query model identity without a fixed env model; failure=%s", async (failed) => {
+    const vector = [1, ...Array(1023).fill(0)];
+    const provider = Object.assign(new FakeProvider(), {
+      embedQuery: async () => { if (failed) throw new Error("embedding offline"); return { model: "runtime-qwen", embeddings: [vector] }; },
+    });
+    const source = new StubPersonaStore();
+    let selected: Parameters<NonNullable<PersonaStore["retrieveContext"]>>[0] | undefined;
+    const personas: PersonaStore = {
+      get: id => source.get(id),
+      retrieveContext: async input => {
+        selected = input;
+        return { fragmentIds: [], canonIds: [], sourceHashes: {}, contextHashes: {}, semanticStatus: input.queryEmbedding.length ? "used" : "query_unavailable" };
+      },
+    };
+    const service = new ChatService(provider, personas, new StubMemoryStore(), new StubJobQueue(), { ...config, integratedContext: true });
+    const prepared = await service.prepare(body, fullCtx);
+    expect(selected?.queryEmbedding).toEqual(failed ? [] : vector);
+    expect(selected?.embeddingModel).toBe(failed ? undefined : "runtime-qwen");
+    expect(prepared.promptDebug?.characterRetrieval?.semanticStatus).toBe(failed ? "query_unavailable" : "used");
+    expect(lastMessage(prepared).content).toContain("My cat is named Nova.");
+    expect(provider.embedCalls).toEqual([]);
+  });
+
+  it("propagates authored-context integrity failures instead of silently dropping context", async () => {
+    const persona: Persona = { characterId: "c", name: "Synthetic", bio: "", blocks: [], canonMemories: [] };
+    const source = new StubPersonaStore([persona]);
+    const personas: PersonaStore = {
+      get: characterId => source.get(characterId),
+      retrieveContext: async () => { throw new PersonaContextIntegrityError("invalid link"); },
+    };
+    const service = new ChatService(new FakeProvider(), personas, new StubMemoryStore(), new StubJobQueue(), {
+      ...config, integratedContext: true,
+    });
+    await expect(service.prepare({ messages: [{ role: "user", content: "hello" }] }, { characterId: "c" }))
+      .rejects.toBeInstanceOf(PersonaContextIntegrityError);
+  });
+
+  it("keeps character canon and a user fact separate even when their wording is identical", async () => {
+    const content = "고양이를 좋아한다.";
+    const persona: Persona = { characterId: "luna", name: "Synthetic", bio: "", blocks: [], canonMemories: [{ id: "canon", content, type: "fact", reason: "fixture", createdAt: "t", updatedAt: "t", kind: "fact", injection: "retrieved", recallKeys: ["고양이"] }] };
+    const memory = new StubMemoryStore();
+    await memory.upsertMany(fullCtx, [{ content, embedding: [], kind: "observation", memoryType: "user_fact", importance: 4 }]);
+    const service = new ChatService(new FakeProvider(), new StubPersonaStore([persona]), memory, new StubJobQueue(), { ...config, integratedContext: true });
+    const prepared = await service.prepare({ messages: [{ role: "user", content: "고양이 좋아해?" }] }, fullCtx);
+    expect(lastMessage(prepared).content.split(content)).toHaveLength(3);
+    expect(prepared.promptDebug?.retrievedMemoryCount).toBe(1);
+    expect(prepared.promptDebug?.personaProvenance?.canonSources?.[0]?.destination).toBe("turn_context");
+  });
+  it("integrated mode uses lexical memory without an embedding call and keeps prior raw messages", async () => {
+    const provider = new FakeProvider();
+    provider.embed = async () => { throw new Error("external embedding must not run"); };
+    const memory = new StubMemoryStore();
+    await memory.upsertMany(fullCtx, [{ content: "Nova is the user's cat", embedding: [], importance: 3, kind: "observation" }]);
+    const service = new ChatService(provider, new StubPersonaStore(), memory, new StubJobQueue(), { ...config, integratedContext: true, contextMaxBytes: 32_000 });
+    const messages = [{ role: "user" as const, content: "Nova 이야기 했었지?" }, { role: "assistant" as const, content: "고양이 말하는 거죠?" }, { role: "user" as const, content: "그거 기억나?" }];
+    const prepared = await service.prepare({ messages }, fullCtx);
+    expect(prepared.request.messages.slice(1, -1)).toEqual(messages.slice(0, -1));
+    expect(lastMessage(prepared).content).toContain("Nova is the user's cat");
+    expect(lastMessage(prepared).content).toMatch(/그거 기억나\?$/u);
+    expect(prepared.promptDebug?.contextBudget?.status).toBe("within_budget");
+  });
+
+  it("integrated mode reports overflow instead of silently dropping uncovered conversation", async () => {
+    const provider = new FakeProvider();
+    const service = new ChatService(provider, new StubPersonaStore(), new StubMemoryStore(), new StubJobQueue(), { ...config, integratedContext: true, contextMaxBytes: 100 });
+    await expect(service.prepare(body, fullCtx)).rejects.toThrow(/context.*budget/i);
+  });
+  it("omits only a raw-covered summary while retaining cross-session conversation agreements", async () => {
+    const memory = new StubMemoryStore();
+    await memory.upsertMany(fullCtx, [
+      {
+        content: "사용자는 반말로 대화하기를 요청했다",
+        embedding: [],
+        importance: 10,
+        kind: "observation",
+        memoryType: "user_fact",
+        contextInjectionMode: "always",
+      },
+    ]);
+    await memory.saveSummary({ ...fullCtx, content: "summary duplicate", turnsCovered: 2, revision: 1, updatedAt: "" }, { idempotencyKey: "seed", expectedRevision: 0 });
+    const service = new ChatService(new FakeProvider(), new StubPersonaStore(), memory, new StubJobQueue(), { ...config, integratedContext: true });
+    const messages = [{ role: "user" as const, content: "원문 사실" }, { role: "assistant" as const, content: "기억했어요" }, { role: "user" as const, content: "오늘 뭐 먹지?" }];
+    const full = await service.prepare({ messages }, fullCtx);
+    expect(full.request.messages.slice(1, -1)).toEqual(messages.slice(0, -1));
+    expect(JSON.stringify(full.request.messages)).not.toContain("summary duplicate");
+    expect(JSON.stringify(full.request.messages)).toContain("사용자는 반말로 대화하기를 요청했다");
+    expect(JSON.stringify(full.request.messages)).toContain("Stable things to keep in mind");
+    const partial = await service.prepare({ messages: messages.slice(2) }, { ...fullCtx, historyOffset: 2 });
+    expect(JSON.stringify(partial.request.messages)).toContain("summary duplicate");
+  });
   it("prepends a persona system prompt when a character is set", async () => {
     const { service } = makeService();
     const prepared = await service.prepare(body, { characterId: "luna" });
     const first = prepared.request.messages[0];
     expect(first?.role).toBe("system");
     expect(String(first?.content)).toContain("You are Luna.");
+  });
+
+  it.each(["cozy", "blunt", "formal", "playful"])("applies the common reply contract without rewriting the %s persona or learning hidden guidance", async (voice) => {
+    const persona: Persona = {
+      characterId: `synthetic-${voice}`,
+      name: `Synthetic ${voice}`,
+      bio: "A character used only for this regression.",
+      blocks: [{ title: "Voice", content: voice }, { title: "Examples", content: "User: What are you doing?\nCharacter: Just finished a concert." }],
+      canonMemories: ["Attended a concert last month."],
+    };
+    const provider = new FakeProvider();
+    const memory = new StubMemoryStore();
+    const queue = new StubJobQueue();
+    const context = { ...fullCtx, characterId: persona.characterId, timezone: "Asia/Seoul" };
+    await memory.saveCoreMemory({ ...context, content: "The user introduced themselves as Min.", updatedAt: "" });
+    const service = new ChatService(provider, new StubPersonaStore([persona]), memory, queue, { ...config, summaryTurnThreshold: 2 }, noopLogger, [], () => new Date("2026-09-08T06:00:00Z"));
+    const request: ChatCompletionRequest = { messages: [
+      { role: "user", content: "일 얘기는 됐고, 내 고양이 이름은 나비야." },
+      { role: "assistant", content: "나비요?" },
+      { role: "user", content: "ㅇㅇ" },
+    ] };
+    const original = structuredClone(request);
+    const prepared = await service.prepare(request, context);
+    const system = String(prepared.request.messages[0]?.content);
+    const tail = lastMessage(prepared).content;
+    expect(system).toContain(`# Voice\n${voice}`);
+    expect(system).toContain("Attended a concert last month.");
+    expect(system).toContain("Authored examples are not exchanges with this person");
+    expect(system).toContain("Read a short reply together with what it answers");
+    expect(tail).toContain("The user introduced themselves as Min.");
+    expect(tail).toContain("not evidence of weather, anyone's schedule, or current activity");
+    expect(tail).not.toContain("don't know their name");
+    expect(prepared.request.messages.slice(1, -1)).toEqual(request.messages.slice(0, -1));
+    expect(tail.startsWith("<context>")).toBe(true);
+    expect(tail.endsWith("</context>\n\nㅇㅇ")).toBe(true);
+    expect(request).toEqual(original);
+    await prepared.postTurn("알겠어요.");
+    expect(queue.enqueued[0]?.turns).toEqual([...original.messages, { role: "assistant", content: "알겠어요." }]);
+    expect(JSON.stringify(queue.enqueued)).not.toContain("<context>");
+    expect(await memory.getCoreMemory(context)).toMatchObject({ content: "The user introduced themselves as Min." });
   });
 
   it("degrades to a plain proxy when no character header is present", async () => {
@@ -682,8 +813,8 @@ describe("ChatService bond", () => {
     expect(state.bondLevel).toBe(2);
 
     const tail = lastMessage(await service.prepare(body, fullCtx));
-    expect(tail.content).toContain("What that lets you do now:");
-    expect(tail.content).toContain("Use their name");
+    expect(tail.content).toContain("Optional room for expression:");
+    expect(tail.content).toContain("You may refer to something they actually shared");
   });
 
   it("leaves the cached prefix untouched while the turn context moves", async () => {

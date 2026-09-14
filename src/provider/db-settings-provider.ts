@@ -75,7 +75,7 @@ export class DbSettingsProvider implements LLMProvider {
     req: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
     options?: ProviderCallOptions,
   ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
-    const provider = await this.current(false);
+    const { provider } = await this.current(false);
     return provider.chat({ ...req, model: this.freshenModel(req.model, provider) }, options);
   }
 
@@ -83,7 +83,7 @@ export class DbSettingsProvider implements LLMProvider {
     req: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
     options?: ProviderCallOptions,
   ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-    const provider = await this.current(false);
+    const { provider } = await this.current(false);
     return provider.chatStream(
       { ...req, model: this.freshenModel(req.model, provider) },
       options,
@@ -91,7 +91,16 @@ export class DbSettingsProvider implements LLMProvider {
   }
 
   async embed(texts: string[], options?: ProviderCallOptions): Promise<number[][]> {
-    return (await this.current(true)).embed(texts, options);
+    return (await this.current(true)).provider.embed(texts, options);
+  }
+
+  async embedQuery(texts: string[], options?: ProviderCallOptions): Promise<{ embeddings: number[][]; model: string }> {
+    const { provider, embeddingModel: model } = await this.current(true);
+    // Qwen's retrieval instruction belongs to queries, never stored documents.
+    const input = model === "Qwen/Qwen3-Embedding-0.6B"
+      ? texts.map(text => `Instruct: Given a message in a character conversation, retrieve relevant facts or memories that help answer it.\nQuery: ${text}`)
+      : texts;
+    return { embeddings: await provider.embed(input, options), model };
   }
 
   private freshenModel(requested: string, provider: LLMProvider): string {
@@ -99,7 +108,7 @@ export class DbSettingsProvider implements LLMProvider {
     return this.supersededDefaults.has(requested) ? provider.defaultModel : requested;
   }
 
-  private async current(requireEmbedding: boolean): Promise<LLMProvider> {
+  private async current(requireEmbedding: boolean): Promise<{ provider: LLMProvider; embeddingModel: string }> {
     let rows: { key: string; value: string }[];
     try {
       const result = await this.pool.query<{ key: string; value: string }>(
@@ -153,6 +162,6 @@ export class DbSettingsProvider implements LLMProvider {
         embeddingModel: config.embeddingModel,
       });
     }
-    return this.cached;
+    return { provider: this.cached, embeddingModel: config.embeddingModel };
   }
 }

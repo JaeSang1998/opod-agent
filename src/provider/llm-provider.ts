@@ -50,6 +50,12 @@ export interface LLMProvider {
   /** Embed one or more texts (used for Archival Memory read + write). */
   embed(texts: string[], options?: ProviderCallOptions): Promise<number[][]>;
 
+  /** Query-only encoding, paired with the model resolved for this exact call. */
+  embedQuery?(
+    texts: string[],
+    options?: ProviderCallOptions,
+  ): Promise<{ embeddings: number[][]; model: string }>;
+
   /** Optional raw-response variant used by the logging decorator for usage. */
   embedWithResponse?(
     texts: string[],

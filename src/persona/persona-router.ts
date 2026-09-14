@@ -3,6 +3,7 @@ import type {
   PersonaBlock,
   PersonaBlockKind,
   PersonaInjection,
+  CharacterCanonMemory,
 } from "./persona.js";
 
 type PersonaPromptDestination = "system_prompt" | "turn_context" | "excluded";
@@ -31,6 +32,10 @@ export interface PromptPersonaProvenance {
   schemaVersion: 1;
   policyVersion: 1;
   sources: PromptPersonaSourceProvenance[];
+  canonSources?: Array<{
+    id: string; kind: "fact" | "event" | null; destination: PersonaPromptDestination;
+    reason: "always_in_system_prompt" | "retrieved_for_turn" | "not_retrieved";
+  }>;
 }
 
 export interface RoutedPersona {
@@ -40,6 +45,7 @@ export interface RoutedPersona {
   startOnlyBlocks: PersonaBlock[];
   /** Dynamic lore selected by a separate relevance owner for this turn. */
   retrievedBlocks: PersonaBlock[];
+  retrievedCanonMemories: CharacterCanonMemory[];
   provenance: PromptPersonaProvenance;
 }
 
@@ -48,6 +54,7 @@ export interface RoutePersonaInput {
   isConversationStart: boolean;
   /** Selection is deliberately external: P1-1 routes; P1-2 owns retrieval quality. */
   retrievedBlockIds: readonly string[];
+  retrievedCanonIds?: readonly string[];
 }
 
 interface PersonaBlockSelectorInput {
@@ -55,6 +62,8 @@ interface PersonaBlockSelectorInput {
   /** Only blocks already classified as `retrieved`; excluded material never crosses this seam. */
   blocks: readonly PersonaBlock[];
   query: string;
+  /** At most the preceding user turn; optional for existing custom selectors. */
+  previousQuery?: string;
 }
 
 /** Retrieval-quality implementations are supplied outside the router. */
@@ -140,10 +149,29 @@ export function routePersona(input: RoutePersonaInput): RoutedPersona {
     }
   });
 
+  const selectedCanon = new Set(input.retrievedCanonIds ?? []);
+  const stableCanon: Persona["canonMemories"] = [];
+  const retrievedCanonMemories: CharacterCanonMemory[] = [];
+  const canonSources: NonNullable<PromptPersonaProvenance["canonSources"]> = [];
+  for (const memory of input.persona.canonMemories) {
+    if (typeof memory === "string" || !memory.injection) {
+      stableCanon.push(memory);
+      continue;
+    }
+    const persistent = memory.injection === "always";
+    const recalled = !persistent && selectedCanon.has(memory.id);
+    if (persistent) stableCanon.push(memory);
+    else if (recalled) retrievedCanonMemories.push(memory);
+    canonSources.push({ id: memory.id, kind: memory.kind ?? null,
+      destination: persistent ? "system_prompt" : recalled ? "turn_context" : "excluded",
+      reason: persistent ? "always_in_system_prompt" : recalled ? "retrieved_for_turn" : "not_retrieved" });
+  }
   return {
-    stablePersona: { ...input.persona, blocks: stableBlocks },
+    stablePersona: { ...input.persona, blocks: stableBlocks, canonMemories: stableCanon },
     startOnlyBlocks,
     retrievedBlocks,
-    provenance: { schemaVersion: 1, policyVersion: 1, sources },
+    retrievedCanonMemories,
+    provenance: { schemaVersion: 1, policyVersion: 1, sources,
+      ...(canonSources.length > 0 ? { canonSources } : {}) },
   };
 }

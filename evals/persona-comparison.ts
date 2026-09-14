@@ -14,6 +14,9 @@ const Case = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: Id }).strict()).min(1),
   historyOffset: z.number().int().safe().nonnegative().default(0),
   reviewFocus: z.string().optional(),
+  oracleSelections: z.array(z.object({
+    conditionId: Id, characterId: Id, blockIds: z.array(Id),
+  }).strict()).optional(),
 }).superRefine((item, ctx) => {
   if (item.messages.length % 2 !== 1 || item.messages.some((m, i) => m.role !== (i % 2 === 0 ? "user" : "assistant"))) {
     ctx.addIssue({ code: "custom", message: "fixed prefixes must alternate user/assistant and end with user" });
@@ -28,6 +31,7 @@ const Settings = z.object({
   repetitions: z.number().int().safe().positive(),
   pairs: z.array(z.tuple([Id, Id])).min(1),
   reviewSeed: z.number().int().safe().nonnegative().default(1729),
+  selectorMode: z.enum(["fixed_empty_diagnostic_only", "fixed_oracle_diagnostic_only"]).default("fixed_empty_diagnostic_only"),
 });
 const Fixture = Settings.extend({
   conditions: z.array(z.object({ id: Id, personas: z.array(Persona).min(1) })).min(2),
@@ -53,6 +57,24 @@ const Fixture = Settings.extend({
       const original = baseline?.personas.find((p) => p.characterId === persona.characterId);
       const identity = (p: Persona | undefined) => p && { name: p.name, bio: p.bio, canon: p.canonMemories };
       if (JSON.stringify(identity(persona)) !== JSON.stringify(identity(original))) fail("identity or canon changed between conditions");
+    }
+  }
+  for (const item of fixture.cases) {
+    if (fixture.selectorMode === "fixed_empty_diagnostic_only") {
+      if (item.oracleSelections !== undefined) fail("oracle selections require oracle diagnostic mode");
+      continue;
+    }
+    const selections = item.oracleSelections ?? [];
+    const expectedCount = fixture.conditions.reduce((sum, c) => sum + c.personas.length, 0);
+    const keys = selections.map((s) => JSON.stringify([s.conditionId, s.characterId]));
+    if (selections.length !== expectedCount || new Set(keys).size !== expectedCount) fail("oracle selection must cover every condition and character exactly once");
+    for (const selection of selections) {
+      const persona = fixture.conditions.find((c) => c.id === selection.conditionId)?.personas.find((p) => p.characterId === selection.characterId);
+      if (!persona) { fail("oracle selection has an unknown condition or character"); continue; }
+      const candidates = new Set(persona.blocks.filter((b) => b.injection === "retrieved").map((b) => b.id));
+      if (new Set(selection.blockIds).size !== selection.blockIds.length || selection.blockIds.some((id) => !candidates.has(id))) {
+        fail("oracle source IDs must be unique retrieved candidates of the selected condition and character");
+      }
     }
   }
 });
@@ -121,9 +143,10 @@ export async function runPersonaComparison(rawFixture: unknown, options: {
         for (const condition of conditions) {
           const persona = condition.personas.find((p) => p.characterId === characterId);
           if (!persona) throw new Error("missing comparison character");
+          const retrievedBlockIds = item.oracleSelections?.find((s) => s.conditionId === condition.id && s.characterId === characterId)?.blockIds ?? [];
           const target = createConversationTarget(env, {
             personas: new StubPersonaStore([persona]), clock: () => new Date(fixture.clock),
-            personalization: "none", personaBlockSelector: { selectRelevantBlockIds: async () => [] },
+            personalization: "none", personaBlockSelector: { selectRelevantBlockIds: async () => retrievedBlockIds },
           });
           const config = { model: target.model, requestConfig: target.requestConfig, runtimeConfig: target.runtimeConfig };
           if (targetConfig && JSON.stringify(config) !== JSON.stringify(targetConfig)) throw new Error("target configuration changed during comparison");
@@ -143,7 +166,7 @@ export async function runPersonaComparison(rawFixture: unknown, options: {
             }
             responseModel = result.responseModel;
             const debug = result.promptDebug;
-            const expected = routePersona({ persona, isConversationStart: item.historyOffset === 0 && item.messages.length === 1, retrievedBlockIds: [] });
+            const expected = routePersona({ persona, isConversationStart: item.historyOffset === 0 && item.messages.length === 1, retrievedBlockIds });
             if (!debug || JSON.stringify(debug.personaProvenance) !== JSON.stringify(expected.provenance) || debug.canonCount !== persona.canonMemories.length || debug.retrievedMemoryCount !== 0 || debug.contextSectionNames.some((s) => ["bond", "core_memory", "conversation_summary", "retrieved_memories"].includes(s))) {
               throw new Error("comparison prompt provenance or hidden state mismatch");
             }
@@ -160,7 +183,7 @@ export async function runPersonaComparison(rawFixture: unknown, options: {
   return {
     schemaVersion: 1, kind: "persona-fixed-prefix-comparison", mode: options.mode,
     completedAt: new Date().toISOString(), structurePassed: true, qualityPassed: false, certificationEligible: false,
-    selectorMode: "fixed_empty_diagnostic_only", personalization: "none", judgeUsed: false,
+    selectorMode: fixture.selectorMode, personalization: "none", judgeUsed: false,
     fixtureSha256: createHash("sha256").update(JSON.stringify(fixture)).digest("hex"),
     plannedCalls, completedCalls: observations.length, externalModelCalls: options.mode === "run" ? observations.length : 0,
     target: targetConfig, observations,

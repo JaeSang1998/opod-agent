@@ -1,7 +1,7 @@
 import type {
-  CoreMemory,
   ArchivalMemory,
   MemoryKind,
+  MemoryMetadata,
   RelationshipKey,
   RelationshipState,
   SessionKey,
@@ -12,7 +12,7 @@ import type { BondGrade } from "./bond.js";
 
 export type { RelationshipKey } from "./types.js";
 
-export interface NewMemory {
+export interface NewMemory extends MemoryMetadata {
   content: string;
   embedding: number[];
   importance: number;
@@ -24,6 +24,9 @@ export interface NewMemory {
 export interface RetrieveOptions {
   weights: RetrievalWeights;
   recencyDecay: number;
+  minRelevance?: number;
+  /** Opt-in contextual lexical + model-compatible semantic retrieval. */
+  hybrid?: { queryText: string; embeddingModel?: string };
 }
 
 interface MemoryRetrievalCandidate {
@@ -33,12 +36,17 @@ interface MemoryRetrievalCandidate {
   score: number;
   rawRelevance: number;
   decision: "selected" | "excluded";
-  reason: "selected_top_k" | "outside_top_k";
+  reason: "selected_top_k" | "outside_top_k" | "below_relevance_threshold" | "duplicate_content";
 }
 
 export interface MemoryRetrievalResult {
   memories: ArchivalMemory[];
   candidates: MemoryRetrievalCandidate[];
+  hybrid?: {
+    semanticStatus: "used" | "no_valid_index" | "query_unavailable" | "failed";
+    lexicalCandidates: number;
+    semanticCandidates: number;
+  };
 }
 
 export interface SummaryWriteGuard {
@@ -84,6 +92,9 @@ export interface MemoryStore {
     opts: RetrieveOptions,
   ): Promise<MemoryRetrievalResult>;
 
+  /** Stable, explicitly grounded memories included independently of the query. */
+  alwaysMemories(key: RelationshipKey): Promise<ArchivalMemory[]>;
+
   /** The most recently created observations (used to seed a reflection pass). */
   recentObservations(key: RelationshipKey, limit: number): Promise<ArchivalMemory[]>;
 
@@ -96,10 +107,6 @@ export interface MemoryStore {
     memories: NewMemory[],
     operationKey?: string,
   ): Promise<ArchivalMemory[]>;
-
-  /** The MemGPT-style core block for a relationship. */
-  getCoreMemory(key: RelationshipKey): Promise<CoreMemory | null>;
-  saveCoreMemory(core: CoreMemory, operationKey?: string): Promise<void>;
 
   /** Current relationship row (reflection accumulator + bond), zeroed when absent. */
   getRelationshipState(key: RelationshipKey): Promise<RelationshipState>;

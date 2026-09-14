@@ -131,10 +131,13 @@ class InProcessTarget implements ConversationTarget {
     this.runtimeConfig = {
       consolidationMode: this.consolidationMode,
       consolidationBatchTurns: this.batchTurns,
+      consolidationQueuePolicy: "all_jobs_with_source_ranges_v1",
       toolsEnabled: loaded.TOOLS_ENABLED,
       providerMode: options.provider ? "override" : providerMode,
       providerOrigin: providerMode === "configured" && !options.provider ? new URL(loaded.LLM_BASE_URL).origin : null,
       personalization: options.personalization ?? "tracked",
+      characterContextMode: loaded.CHARACTER_CONTEXT_MODE,
+      contextMaxBytes: loaded.CONTEXT_MAX_BYTES,
       clock: options.clock ? options.clock().toISOString() : "wall-clock",
       maxRetries: env.EVAL_TARGET_MAX_RETRIES === undefined ? "sdk-default" : nonNegativeInteger(env.EVAL_TARGET_MAX_RETRIES, 0),
     };
@@ -144,9 +147,11 @@ class InProcessTarget implements ConversationTarget {
     if (!(this.container.memory instanceof StubMemoryStore)) {
       throw new Error("in-process memory fixtures require StubMemoryStore");
     }
-    const embeddings = await this.container.provider.embed(
-      input.memoryFixture.records.map((record) => record.content),
-    );
+    // Integrated bootstrap does not yet verify a production embedding identity.
+    // Seed lexical-only fixtures without creating an unapproved external call.
+    const embeddings = this.runtimeConfig.characterContextMode === "integrated"
+      ? input.memoryFixture.records.map(() => [] as number[])
+      : await this.container.provider.embed(input.memoryFixture.records.map((record) => record.content));
     if (embeddings.length !== input.memoryFixture.records.length) {
       throw new Error(
         `memory fixture embedding count ${embeddings.length} does not match ` +
@@ -204,38 +209,20 @@ class InProcessTarget implements ConversationTarget {
       this.consolidationMode === "quiescent" ||
       (this.consolidationMode === "batched" && input.userTurn % this.batchTurns === 0)
     ) {
-      await this.drainQueue(this.consolidationMode === "batched");
+      await this.drainQueue();
     }
     return { ...parsed, latencyMs };
   }
 
   async close(): Promise<void> {
     if (this.consolidationMode !== "none") {
-      await this.drainQueue(this.consolidationMode === "batched");
+      await this.drainQueue();
     }
   }
 
-  private async drainQueue(coalesceOverlapping: boolean): Promise<void> {
-    if (coalesceOverlapping) {
-      const pending = this.queue.enqueued.slice(this.queueCursor);
-      if (pending.length === 0) return;
-      this.queueCursor = this.queue.enqueued.length;
-      // While the async worker is delayed, every request sees the same stale
-      // Summary and can enqueue an overlapping prefix. The latest summary job
-      // supersedes earlier prefixes. Preserve later archival-only jobs because
-      // they may represent memorable turns after a history gap.
-      const latestSummaryIndex = pending.findLastIndex((job) => job.refreshSummary);
-      const selected = latestSummaryIndex < 0
-        ? pending
-        : [
-            pending[latestSummaryIndex],
-            ...pending.slice(latestSummaryIndex + 1).filter((job) => !job.refreshSummary),
-          ];
-      for (const job of selected) {
-        if (job) await this.container.consolidation.consolidate(job);
-      }
-      return;
-    }
+  private async drainQueue(): Promise<void> {
+    // Delay execution in batched mode, but do not silently delete overlapping
+    // jobs. Production consolidation owns source-range coverage in both modes.
     while (this.queueCursor < this.queue.enqueued.length) {
       const job = this.queue.enqueued[this.queueCursor];
       if (!job) break;
@@ -265,6 +252,10 @@ class HttpTarget implements ConversationTarget {
       responseTimeoutMs: this.timeoutMs,
       remoteSettleMs: this.settleMs,
       consolidationMode: "remote",
+      characterContextMode: "remote-unverified",
+      contextMaxBytes: null,
+      requestedCharacterContextMode: env.CHARACTER_CONTEXT_MODE ?? null,
+      requestedContextMaxBytes: env.CONTEXT_MAX_BYTES ?? null,
     };
   }
 
@@ -390,6 +381,7 @@ const PROMPT_CONTEXT_SECTION_NAMES = new Set<PromptContextSectionName>([
   "bond",
   "persona_start",
   "persona_retrieved",
+  "character_memories",
   "core_memory",
   "conversation_summary",
   "retrieved_memories",
@@ -405,6 +397,8 @@ function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
     : undefined;
   const memoryProvenance = parseMemoryProvenance(value.memoryProvenance);
   const personaProvenance = parsePersonaProvenance(value.personaProvenance);
+  const contextBudget = parseContextBudget(value.contextBudget);
+  const characterRetrieval = parseCharacterRetrieval(value.characterRetrieval);
   const valid =
     value.schemaVersion === 1 &&
     typeof value.stablePromptSha256 === "string" &&
@@ -417,7 +411,7 @@ function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
         PROMPT_CONTEXT_SECTION_NAMES.has(section as PromptContextSectionName),
     ) === true &&
     isNonNegativeInteger(value.retrievedMemoryCount) &&
-    value.memoryPolicyVersion === 1 &&
+    (value.memoryPolicyVersion === 1 || value.memoryPolicyVersion === 2) &&
     retrieval !== undefined &&
     isPositiveInteger(retrieval.topK) &&
     weights !== undefined &&
@@ -426,7 +420,9 @@ function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
     isNonNegativeNumber(weights.relevance) &&
     isPositiveNumber(retrieval.recencyDecay) &&
     retrieval.recencyDecay <= 1 &&
-    isPositiveInteger(retrieval.summaryTurnThreshold);
+    isPositiveInteger(retrieval.summaryTurnThreshold) &&
+    (retrieval.minRelevance === undefined || (typeof retrieval.minRelevance === "number" &&
+      Number.isFinite(retrieval.minRelevance) && retrieval.minRelevance >= -1 && retrieval.minRelevance <= 1));
   if (!valid || !retrieval || !weights || !sections) {
     throw new Error("target returned invalid prompt debug metadata");
   }
@@ -439,7 +435,9 @@ function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
     retrievedMemoryCount: value.retrievedMemoryCount as number,
     memoryProvenance,
     personaProvenance,
-    memoryPolicyVersion: 1,
+    ...(contextBudget ? { contextBudget } : {}),
+    ...(characterRetrieval ? { characterRetrieval } : {}),
+    memoryPolicyVersion: value.memoryPolicyVersion as 1 | 2,
     retrievalConfig: {
       topK: retrieval.topK as number,
       weights: {
@@ -449,8 +447,41 @@ function parsePromptDebug(value: unknown): PromptDebugMetadata | undefined {
       },
       recencyDecay: retrieval.recencyDecay as number,
       summaryTurnThreshold: retrieval.summaryTurnThreshold as number,
+      ...(retrieval.minRelevance !== undefined ? { minRelevance: retrieval.minRelevance as number } : {}),
     },
   };
+}
+
+const SEMANTIC_STATUSES = new Set(["used", "no_valid_index", "query_unavailable", "failed"]);
+
+function parseCharacterRetrieval(value: unknown): PromptDebugMetadata["characterRetrieval"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof value.semanticStatus !== "string" || !SEMANTIC_STATUSES.has(value.semanticStatus)) {
+    throw new Error("target returned invalid character retrieval metadata");
+  }
+  return { semanticStatus: value.semanticStatus };
+}
+
+function parseContextBudget(value: unknown): PromptDebugMetadata["contextBudget"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || value.status !== "within_budget" || !isPositiveInteger(value.maxBytes)
+    || !isNonNegativeInteger(value.bytes) || value.bytes > value.maxBytes
+    || !Array.isArray(value.retainedIds) || !Array.isArray(value.droppedIds)
+    || ![...value.retainedIds, ...value.droppedIds].every(id => typeof id === "string" && id.length > 0)
+    || new Set([...value.retainedIds, ...value.droppedIds]).size !== value.retainedIds.length + value.droppedIds.length) {
+    throw new Error("target returned invalid context budget metadata");
+  }
+  return { status: "within_budget", maxBytes: value.maxBytes, bytes: value.bytes,
+    retainedIds: value.retainedIds as string[], droppedIds: value.droppedIds as string[] };
+}
+
+function parseHybridRetrieval(value: unknown): PromptMemoryProvenance["hybrid"] {
+  if (value === undefined) return undefined;
+  const retrieval = parseCharacterRetrieval(value);
+  if (!retrieval || !isRecord(value) || !isNonNegativeInteger(value.lexicalCandidates)
+    || !isNonNegativeInteger(value.semanticCandidates)) throw new Error("target returned invalid hybrid retrieval metadata");
+  return { semanticStatus: retrieval.semanticStatus as NonNullable<PromptMemoryProvenance["hybrid"]>["semanticStatus"],
+    lexicalCandidates: value.lexicalCandidates, semanticCandidates: value.semanticCandidates };
 }
 
 const PERSONA_KINDS = new Set([
@@ -494,7 +525,24 @@ function parsePersonaProvenance(value: unknown): PromptPersonaProvenance | undef
     schemaVersion: 1,
     policyVersion: 1,
     sources: value.sources.map(parsePersonaSourceProvenance),
+    ...(value.canonSources === undefined ? {} : { canonSources: parseCanonSources(value.canonSources) }),
   };
+}
+
+function parseCanonSources(value: unknown): NonNullable<PromptPersonaProvenance["canonSources"]> {
+  if (!Array.isArray(value)) throw new Error("target returned invalid canon provenance metadata");
+  return value.map(source => {
+    if (!isRecord(source) || typeof source.id !== "string" || !source.id ||
+      ![null, "fact", "event"].includes(source.kind as string | null) ||
+      !((source.reason === "always_in_system_prompt" && source.destination === "system_prompt") ||
+        (source.reason === "retrieved_for_turn" && source.destination === "turn_context") ||
+        (source.reason === "not_retrieved" && source.destination === "excluded"))) {
+      throw new Error("target returned invalid canon provenance metadata");
+    }
+    return { id: source.id, kind: source.kind as "fact" | "event" | null,
+      destination: source.destination as "system_prompt" | "turn_context" | "excluded",
+      reason: source.reason as "always_in_system_prompt" | "retrieved_for_turn" | "not_retrieved" };
+  });
 }
 
 function parsePersonaSourceProvenance(value: unknown): PromptPersonaSourceProvenance {
@@ -556,7 +604,9 @@ const MEMORY_PROVENANCE_REASONS = new Set([
 const MEMORY_RETRIEVAL_REASONS = new Set([
   "selected_top_k",
   "outside_top_k",
+  "below_relevance_threshold",
   "legacy_store_selected",
+  "duplicate_content",
 ]);
 
 function parseMemoryProvenance(value: unknown): PromptMemoryProvenance | undefined {
@@ -572,6 +622,7 @@ function parseMemoryProvenance(value: unknown): PromptMemoryProvenance | undefin
     throw new Error("target returned invalid memory provenance metadata");
   }
   const sources = value.sources.map(parseMemorySourceProvenance);
+  const hybrid = parseHybridRetrieval(value.hybrid);
   const statusMatchesReason =
     (value.status === "completed" && value.reason === "retrieval_completed") ||
     (value.status === "failed" && value.reason === "retrieval_failed") ||
@@ -586,6 +637,7 @@ function parseMemoryProvenance(value: unknown): PromptMemoryProvenance | undefin
     status: value.status as PromptMemoryProvenance["status"],
     reason: value.reason as PromptMemoryProvenance["reason"],
     sources,
+    ...(hybrid ? { hybrid } : {}),
   };
 }
 
@@ -605,7 +657,7 @@ function parseMemorySourceProvenance(value: unknown): PromptMemorySourceProvenan
     (value.retrieval === "selected" || value.retrieval === "excluded") &&
     typeof value.retrievalReason === "string" &&
     MEMORY_RETRIEVAL_REASONS.has(value.retrievalReason) &&
-    (value.retrievalReason === "outside_top_k"
+    (value.retrievalReason === "outside_top_k" || value.retrievalReason === "below_relevance_threshold" || value.retrievalReason === "duplicate_content"
       ? value.retrieval === "excluded"
       : value.retrieval === "selected") &&
     typeof value.injected === "boolean" &&

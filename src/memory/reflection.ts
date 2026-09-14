@@ -1,4 +1,5 @@
 import { LLM_LOG_TYPE, type LLMProvider } from "../provider/llm-provider.js";
+import { createHash } from "node:crypto";
 import { completeText } from "./complete-text.js";
 import type { MemoryStore } from "./memory-store.js";
 import type { ArchivalMemory, RelationshipKey } from "./types.js";
@@ -16,10 +17,12 @@ export interface ReflectionConfig {
   retrieveTopK: number;
   /** Importance assigned to synthesized reflections (they are high-level). */
   reflectionImportance: number;
-  /** Max characters for the self-rewritten core block (MemGPT block limit). */
-  coreCharLimit: number;
+  /** @deprecated Kept temporarily for config compatibility; no core block is rewritten. */
+  coreCharLimit?: number;
   weights: RetrievalWeights;
   recencyDecay: number;
+  integratedContext?: boolean;
+  embeddingModel?: string;
 }
 
 export interface ReflectResult {
@@ -30,15 +33,14 @@ export interface ReflectResult {
 /**
  * The autonomous learning pass (docs/adr/0005). Combines Generative Agents'
  * reflection (salient questions → retrieve evidence → synthesize cited Reflections,
- * appended back into the stream) with MemGPT's self-editing core block (rewrite a
- * compact, always-in-context digest of the user). Runs off the chat hot path.
+ * appended back into the stream). Runs off the chat hot path.
  */
 export class Reflector {
   constructor(
     private readonly provider: LLMProvider,
     private readonly memory: MemoryStore,
     private readonly config: ReflectionConfig,
-    private readonly now: () => string = () => new Date().toISOString(),
+    _now: () => string = () => new Date().toISOString(),
   ) {}
 
   async reflect(
@@ -58,14 +60,7 @@ export class Reflector {
       idempotencyKey,
       signal,
     );
-    const coreUpdated = await this.rewriteCore(
-      key,
-      recent,
-      reflections.map((reflection) => reflection.content),
-      idempotencyKey,
-      signal,
-    );
-    return { reflectionsStored, coreUpdated };
+    return { reflectionsStored, coreUpdated: false };
   }
 
   /** GA generate_focal_pt: the most salient high-level questions about the user. */
@@ -101,7 +96,7 @@ export class Reflector {
   ): Promise<ParsedReflection[]> {
     const reflections: ParsedReflection[] = [];
     for (const q of questions) {
-      const [qEmbedding] = await this.provider.embed([q], {
+      const [qEmbedding] = this.config.integratedContext && !this.config.embeddingModel ? [] : await this.provider.embed([q], {
         signal,
         log: {
           type: LLM_LOG_TYPE.memoryReflectionQuestionEmbedding,
@@ -113,6 +108,9 @@ export class Reflector {
       const evidence = await this.memory.retrieve(key, qEmbedding ?? [], this.config.retrieveTopK, {
         weights: this.config.weights,
         recencyDecay: this.config.recencyDecay,
+        ...(this.config.integratedContext ? {
+          hybrid: { queryText: q, embeddingModel: this.config.embeddingModel },
+        } : {}),
       });
       reflections.push(...(await this.synthesize(key, evidence, requestId, signal)));
     }
@@ -130,7 +128,9 @@ export class Reflector {
     const system =
       `What ${this.config.reflectionsPerQuestion} high-level Reflections can you infer about the ` +
       "person from the statements below? Format each as: reflection (because of 1, 3). " +
-      "The numbers refer to the statements. One Reflection per line.";
+      "The numbers must refer only to the supplied statements, starting at 1. " +
+      "Every Reflection needs citations. One Reflection per line, with no extra commentary. " +
+      "If no supported Reflection can be inferred, return an empty response.";
     const numbered = evidence.map((m, i) => `${i + 1}. ${m.content}`).join("\n");
     const text = await completeText(this.provider, system, numbered, {
       signal,
@@ -151,7 +151,7 @@ export class Reflector {
     signal?: AbortSignal,
   ): Promise<number> {
     if (reflections.length === 0) return 0;
-    const embeddings = await this.provider.embed(
+    const embeddings = this.config.integratedContext && !this.config.embeddingModel ? [] : await this.provider.embed(
       reflections.map((reflection) => reflection.content),
       {
         signal,
@@ -171,53 +171,17 @@ export class Reflector {
         importance: this.config.reflectionImportance,
         kind: "reflection" as const,
         evidence: reflection.evidence,
+        ...(this.config.integratedContext ? {
+          memoryType: "interpretation" as const,
+          ...(this.config.embeddingModel ? {
+            embeddingModel: this.config.embeddingModel,
+            embeddingSourceSha256: createHash("sha256").update(reflection.content).digest("hex"),
+          } : {}),
+        } : {}),
       })),
       idempotencyKey ? `${idempotencyKey}:reflections` : undefined,
     );
     return rows.length;
   }
 
-  /** MemGPT self-edit: rewrite the compact core digest of the user. */
-  private async rewriteCore(
-    key: RelationshipKey,
-    recent: ArchivalMemory[],
-    reflections: string[],
-    idempotencyKey?: string,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
-    const current = await this.memory.getCoreMemory(key);
-    const system =
-      "You maintain compact Core Memory that a Character keeps in mind across conversations. " +
-      "Rewrite the Core Memory below, integrating the new material. Keep it under " +
-      `${this.config.coreCharLimit} characters, accurate, and free of contradictions — correct ` +
-      "outdated Observations in place. Return only the Core Memory text.";
-    const material = [
-      ...recent.map((m) => `- ${m.content}`),
-      ...reflections.map((reflection) => `- (Reflection) ${reflection}`),
-    ].join("\n");
-    const user = `Current Core Memory:\n${current?.content ?? "(empty)"}\n\nNew material:\n${material}`;
-
-    const content = (
-      await completeText(this.provider, system, user, {
-        signal,
-        log: {
-          type: LLM_LOG_TYPE.memoryCoreRewrite,
-          requestId: idempotencyKey,
-          userId: key.userId,
-          characterId: key.characterId,
-        },
-      })
-    ).trim();
-    if (!content) return false;
-    await this.memory.saveCoreMemory(
-      {
-        userId: key.userId,
-        characterId: key.characterId,
-        content: content.slice(0, this.config.coreCharLimit),
-        updatedAt: this.now(),
-      },
-      idempotencyKey ? `${idempotencyKey}:core` : undefined,
-    );
-    return true;
-  }
 }

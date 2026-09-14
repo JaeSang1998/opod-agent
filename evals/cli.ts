@@ -12,6 +12,7 @@ import {
 } from "./evaluate.js";
 import { OpenAiStructuredLlm, structuredLlmConfig } from "./llm.js";
 import {
+  aggregateInjectionReview,
   aggregateNaturalnessBlindReviews,
   createNaturalnessBlindReviewBundle,
   renderNaturalnessBlindReviewAgreement,
@@ -75,6 +76,16 @@ if (parsed.values.help) {
 
 async function main(): Promise<void> {
   const command = parsed.positionals[0] ?? "validate";
+  if (command === "review-injection") {
+    const key = JSON.parse(await readFile(requiredPath(parsed.values.key, "--key"), "utf8"));
+    const submission = JSON.parse(await readFile(requiredPath(parsed.values.source, "--source"), "utf8"));
+    const report = aggregateInjectionReview(key, submission);
+    const directory = requiredPath(parsed.values.output, "--output");
+    await createNewOutputDirectory(directory);
+    await writeJson(resolve(directory, "review-summary.json"), report);
+    console.log(JSON.stringify(report.counts));
+    return;
+  }
   if (command === "review-prepare") {
     await prepareBlindReview();
     return;
@@ -503,6 +514,7 @@ Commands:
   run       Execute closed-loop trajectories and write JSON + ATIF artifacts
   review-prepare    Create two blinded packets and draft submissions without model calls
   review-aggregate  Validate two completed submissions and calculate agreement
+  review-injection Validate one partial single-answer submission (--key, --source, --output)
 
 Profiles:
   smoke       2 scenarios × 6 exchanges × 1 judge (connectivity, not H30 certification)

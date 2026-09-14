@@ -26,13 +26,12 @@ export function lastUserMessage(messages: ChatMessage[]): TextMessage | null {
 }
 
 /**
- * `messages` with a per-turn context block appended to the last user message.
+ * `messages` with per-turn context before the text of the last user message.
  *
- * Inside that message rather than in a system message of its own, for two
- * reasons. It has to be the very last thing the model reads, and a trailing
- * system message is exactly what chat templates disagree about — Gemma has no
- * system role at all, and several runtimes only hoist or accept one at the
- * front. A user turn is the one shape every template renders in place.
+ * Keep the block behind unchanged history for prefix caching, but finish the
+ * target message with what the person actually typed, not runtime guidance.
+ * Reuse the existing user-message envelope rather than adding a trailing
+ * system/developer role that OpenAI-compatible chat templates may not support.
  *
  * Never mutates: the caller's array is what Consolidation later learns from,
  * and it must keep the words the person actually typed and nothing else.
@@ -46,7 +45,7 @@ export function withTurnContext(messages: ChatMessage[], block: string | null): 
 
   const target = messages[index] as TextMessage;
   const copy = [...messages];
-  copy[index] = { ...target, content: `${target.content}\n\n${block}` };
+  copy[index] = { ...target, content: `${block}\n\n${target.content}` };
   return copy;
 }
 

@@ -364,6 +364,23 @@ const BlindReviewTrajectoryVerdictSchema = z.enum([
   "not-reviewed",
 ]);
 
+/** Single-condition audit reviews remain separate from pairwise preferences. */
+export const InjectionReviewSubmissionSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("persona-memory-injection-review-submission"),
+  packetId: z.string().regex(/^packet-[a-f0-9]{12}$/),
+  runId: z.string().min(1),
+  reviewerAlias: z.string().min(1),
+  status: z.literal("draft"),
+  answerReviews: z.array(z.object({
+    answerId: z.string().min(1),
+    requestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    verdict: BlindReviewTrajectoryVerdictSchema,
+    note: z.string(),
+    contextVerdict: z.enum(["not-reviewed", "valid", "problem", "insufficient"]).default("not-reviewed"),
+  }).strict()),
+}).strict();
+
 const BlindReviewPairwiseWinnerSchema = z.enum([
   "left",
   "right",
@@ -746,7 +763,13 @@ export const ScenarioSchema = z
     description: z.string().min(1),
     language: z.string().min(2).default("ko"),
     estimatedMinutes: z.number().positive().default(30),
-    targetTurns: z.number().int().min(12).max(40).default(24),
+    targetTurns: z.number().int().min(1).max(40).default(24),
+    conversationDesign: z.object({
+      kind: z.literal("reactive-pilot"),
+      relationship: z.literal("first-contact"),
+      // An agent's pre-execution consistency check, never a human quality verdict.
+      contextCheck: z.string().trim().min(1),
+    }).strict().optional(),
     historyWindowMessages: z.number().int().min(4).max(80).default(12),
     character: CharacterSchema.default(DEFAULT_CHARACTER),
     user: z.object({
@@ -776,6 +799,20 @@ export const ScenarioSchema = z
     passThreshold: z.number().min(0).max(1).default(0.78),
   })
   .superRefine((scenario, ctx) => {
+    if (!scenario.conversationDesign && scenario.targetTurns < 12) {
+      ctx.addIssue({ code: "custom", path: ["targetTurns"], message: "short trajectories require an explicit reactive-pilot contract" });
+    }
+    if (scenario.conversationDesign) {
+      if (scenario.scriptedTurns.length !== 1 || scenario.scriptedTurns[0]?.turn !== 1) {
+        ctx.addIssue({ code: "custom", path: ["scriptedTurns"], message: "reactive pilots script only the opening; later messages must respond to actual replies" });
+      }
+      if (scenario.historyWindowMessages < scenario.targetTurns * 2 - 1) {
+        ctx.addIssue({ code: "custom", path: ["historyWindowMessages"], message: "reactive pilots retain the complete conversation" });
+      }
+      if (scenario.memoryFixture || scenario.leakageGuards.length) {
+        ctx.addIssue({ code: "custom", message: "first-contact reactive pilots cannot seed shared history or hidden-answer guards" });
+      }
+    }
     const scripted = scenario.scriptedTurns.map((turn) => turn.turn);
     if (new Set(scripted).size !== scripted.length) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scriptedTurns"], message: "turns must be unique" });

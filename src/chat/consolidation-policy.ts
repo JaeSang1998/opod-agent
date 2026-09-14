@@ -21,7 +21,7 @@ export type ConsolidationDecision =
       refreshSummary: false;
       turns: [];
     }
-  | { enqueue: true; reason: EnqueueReason; refreshSummary: boolean; turns: ChatMessage[] };
+  | { enqueue: true; reason: EnqueueReason; refreshSummary: boolean; turns: ChatMessage[]; turnsStartOffset: number };
 
 const ENGLISH_MEMORY_CUE =
   /\b(?:i am|i'm|i have|i've|i live|i work|i study|i like|i love|i hate|i prefer|i need|i want|i plan|my\s+[\p{L}\p{N}_' -]{1,60}\s+(?:is|are|was|were))\b/iu;
@@ -61,6 +61,7 @@ export function decideConsolidation(
         reason: "memorable-content",
         refreshSummary: false,
         turns: conversation.slice(-latestExchangeSize),
+        turnsStartOffset: input.historyOffset + conversation.length - latestExchangeSize,
       };
     }
     return {
@@ -82,5 +83,5 @@ export function decideConsolidation(
   if (reason === "not-needed") {
     return { enqueue: false, reason, refreshSummary: false, turns: [] };
   }
-  return { enqueue: true, reason, refreshSummary: true, turns };
+  return { enqueue: true, reason, refreshSummary: true, turns, turnsStartOffset: claimedCovered };
 }

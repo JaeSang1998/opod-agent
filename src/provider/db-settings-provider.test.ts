@@ -40,6 +40,34 @@ function providerWithCapturedConfig(configs: ProviderConfig[]) {
 }
 
 describe("DbSettingsProvider", () => {
+  it("keeps query embeddings paired with their DB model and applies Qwen instructions only to queries", async () => {
+    let model = "Qwen/Qwen3-Embedding-0.6B";
+    const instances: FakeProvider[] = [];
+    const { pool } = fakePool(() => COMPLETE_SETTINGS.map(row => row.key === "agent.embeddingModel" ? { ...row, value: model } : row));
+    const provider = new DbSettingsProvider(pool, noopLogger, () => {
+      const instance = new FakeProvider(); instances.push(instance); return instance;
+    });
+    const query = await provider.embedQuery(["반려동물 있어요?"]);
+    expect(query.model).toBe(model);
+    expect(query.embeddings).toHaveLength(1);
+    expect(instances[0]?.embedCalls[0]?.[0]).toMatch(/^Instruct: .+\nQuery: 반려동물 있어요\?$/u);
+    await provider.embed(["담이와 산다."]);
+    expect(instances[0]?.embedCalls[1]).toEqual(["담이와 산다."]);
+    model = "another-embedding-model";
+    const changed = await provider.embedQuery(["반려동물 있어요?"]);
+    expect(changed.model).toBe(model);
+    expect(instances[1]?.embedCalls[0]).toEqual(["반려동물 있어요?"]);
+  });
+
+  it("never uses cached query embeddings after a settings lookup failure", async () => {
+    let failed = false;
+    const { pool } = fakePool(() => { if (failed) throw new Error("DB offline"); return COMPLETE_SETTINGS; });
+    const provider = new DbSettingsProvider(pool, noopLogger, providerWithCapturedConfig([]));
+    await provider.embedQuery(["first"]);
+    failed = true;
+    await expect(provider.embedQuery(["second"])).rejects.toBeInstanceOf(LlmConfigUnavailableError);
+  });
+
   it("normalizes stored operation URLs to OpenAI client base URLs", () => {
     expect(baseUrlFrom("https://api.test/v1/chat/completions", "chat/completions")).toBe(
       "https://api.test/v1",

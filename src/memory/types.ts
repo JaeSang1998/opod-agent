@@ -3,18 +3,37 @@
  *  - Generative Agents (Park et al. 2023): an append-only memory stream of
  *    Observations, each scored for importance (poignancy 1-10), plus Reflections
  *    synthesized when accumulated importance crosses a threshold.
- *  - MemGPT / Letta (Packer et al. 2023): a compact, self-rewritten Core block
- *    that always stays in context — the character's mental model of the user.
+ *  - Stable, explicitly grounded facts can be marked for always-on injection;
+ *    other memories remain query-retrieved.
  *
  * Tiers:
  *  - Short-term: recent turns, passed in by the caller — not stored here.
  *  - Archival:   ArchivalMemory (Observations + Reflections), keyed
  *                by the (user, character) relationship, importance-weighted.
- *  - Core:       CoreMemory — a small always-injected relationship digest.
  *  - Summary:    a rolling episodic compression, keyed by session.
  */
 
 export type MemoryKind = "observation" | "reflection";
+export type MemoryType = "user_fact" | "shared_episode" | "interpretation";
+export type MemoryContextInjectionMode = "always" | "retrieved";
+
+export interface MemorySourceMessage {
+  role: "user" | "assistant";
+  content: string;
+  position: number;
+  sha256: string;
+}
+
+/** Unknown legacy provenance is left absent, never inferred from creation time. */
+export interface MemoryMetadata {
+  embeddingModel?: string;
+  embeddingSourceSha256?: string;
+  sourceSessionId?: string;
+  sourceMessages?: MemorySourceMessage[];
+  memoryType?: MemoryType;
+  occurredAt?: string;
+  contextInjectionMode?: MemoryContextInjectionMode;
+}
 
 export interface RelationshipKey {
   userId: string;
@@ -25,7 +44,7 @@ export interface SessionKey extends RelationshipKey {
   sessionId: string;
 }
 
-export interface ArchivalMemory {
+export interface ArchivalMemory extends MemoryMetadata {
   id: string;
   userId: string;
   characterId: string;
@@ -43,13 +62,8 @@ export interface ArchivalMemory {
   lastAccessedAt: string;
 }
 
-/**
- * MemGPT-style core block: a compact, self-rewritten digest of the user that the
- * character always sees. Relationship-scoped (survives across sessions).
- */
-export interface CoreMemory {
-  userId: string;
-  characterId: string;
+/** Compatibility projection used by callers while legacy core rows migrate. */
+export interface CoreMemory extends RelationshipKey {
   content: string;
   updatedAt: string;
 }
@@ -75,8 +89,7 @@ export interface RelationshipState {
   bondLevel: number;
   /**
    * When they last traded messages (ISO). Recency is derived from it on read.
-   * Persisted in the `last_decay_at` column, which keeps its old name until the
-   * schema catches up in opod-service-backend.
+   * Persisted in `last_exchange_at`.
    */
   lastExchangeAt: string;
   /** Service-date (KST `YYYY-MM-DD`) the daily bond counter belongs to. */

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
+  InjectionReviewSubmissionSchema,
   type NaturalnessBlindReviewKey,
   NaturalnessBlindReviewKeySchema,
   type NaturalnessBlindReviewPacket,
@@ -8,6 +9,33 @@ import {
   type NaturalnessBlindReviewSubmission,
   NaturalnessBlindReviewSubmissionSchema,
 } from "./schema.js";
+
+export function aggregateInjectionReview(rawKey: unknown, rawSubmission: unknown) {
+  const key = z.object({
+    packetId: z.string().regex(/^packet-[a-f0-9]{12}$/), runId: z.string().min(1),
+    items: z.array(z.object({ id: z.string().min(1), requestSha256: z.string().regex(/^[a-f0-9]{64}$/) })).min(1),
+  }).parse(rawKey);
+  const submission = InjectionReviewSubmissionSchema.parse(rawSubmission);
+  if (submission.packetId !== key.packetId || submission.runId !== key.runId) throw new Error("review packet or run mismatch");
+  if (new Set(key.items.map(item => item.id)).size !== key.items.length) throw new Error("duplicate packet answer ID");
+  const supplied = new Map(submission.answerReviews.map(review => [review.answerId, review]));
+  if (supplied.size !== submission.answerReviews.length) throw new Error("duplicate review answer ID");
+  for (const review of supplied.values()) {
+    if (key.items.find(item => item.id === review.answerId)?.requestSha256 !== review.requestSha256) throw new Error("unknown answer or stale request hash");
+  }
+  const answerReviews = key.items.map(item => supplied.get(item.id) ?? {
+    answerId: item.id, requestSha256: item.requestSha256,
+    verdict: "not-reviewed" as const, note: "", contextVerdict: "not-reviewed" as const,
+  });
+  const counts = { pass: 0, fail: 0, abstain: 0, "not-reviewed": 0 };
+  for (const review of answerReviews) counts[review.verdict]++;
+  return {
+    schemaVersion: 1, kind: "persona-memory-injection-review-summary", packetId: key.packetId,
+    runId: key.runId, reviewerAlias: submission.reviewerAlias, status: "partial",
+    counts, answerReviews, contextProblems: answerReviews.filter(review => review.contextVerdict === "problem").map(review => review.answerId),
+    trajectoryVerdict: "not-reviewed", comparisonClaim: "none",
+  };
+}
 
 const ReviewSourceSchema = z
   .object({

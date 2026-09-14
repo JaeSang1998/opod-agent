@@ -102,6 +102,7 @@ describe("decideConsolidation", () => {
       enqueue: true,
       reason: "memorable-content",
       refreshSummary: true,
+      turnsStartOffset: 100,
       turns: [
         { role: "user", content: "My new project is Atlas." },
         { role: "assistant", content: "Tell me more." },
@@ -126,6 +127,7 @@ describe("decideConsolidation", () => {
       enqueue: true,
       reason: "memorable-content",
       refreshSummary: false,
+      turnsStartOffset: 0,
       turns: [
         { role: "user", content: "My new project is Atlas." },
         { role: "assistant", content: "Tell me more." },

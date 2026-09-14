@@ -1,5 +1,6 @@
 import type { Persona } from "../persona/persona.js";
 import { BOND_SIGNAL_INSTRUCTION } from "./turn-context.js";
+import { renderPersonaBlock } from "./persona-reference.js";
 
 export interface PromptInputs {
   persona: Persona;
@@ -37,7 +38,9 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   sections.push(
     [
       `You are ${persona.name}.`,
-      persona.bio,
+      // An explicitly authored identity replaces the public profile/caption.
+      // Legacy cards with no non-empty identity retain their existing bio.
+      persona.blocks.some(block => block.kind === "identity" && block.content.trim()) ? null : persona.bio,
     ]
       .filter(Boolean)
       .join(" "),
@@ -51,16 +54,23 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   // into stage direction and answers as if the two were in the same room.
   sections.push(CONVERSATION_CHANNEL);
 
-  // The Persona Router owns inclusion policy. The renderer deliberately uses
-  // every block in the stable view it receives, without guessing from titles.
-  for (const block of persona.blocks) {
-    if (block.content.trim()) sections.push(`# ${block.title}\n${block.content}`);
+  // The router owns inclusion. Frame the selected material as reference without
+  // guessing block roles from titles or rewriting the author's identity/voice.
+  const reference = persona.blocks
+    .filter((block) => block.content.trim())
+    .map((block) => renderPersonaBlock(block, 1));
+  if (reference.length > 0) {
+    sections.push(
+      "# Authored character reference\nRead these descriptions for identity, voice and judgment. Sample dialogue and described situations are reference material, not this person's messages or a script to continue. Preserve the character's traits and boundaries without adopting a sample's relationship, events or current activity.",
+      ...reference,
+      "# End of authored character reference",
+    );
   }
 
   if (persona.canonMemories.length > 0) {
-    const facts = persona.canonMemories.map((m) => `- ${m}`).join("\n");
+    const facts = persona.canonMemories.map((m) => `- ${typeof m === "string" ? m : m.content}`).join("\n");
     sections.push(
-      `# Established facts of your life\n${facts}\nThese are canon: whatever you say must stay consistent with them.`,
+      `# Established facts of your life\n${facts}\nThese are canon: whatever you say must stay consistent with them. A recorded event or post belongs to its own context; it is not evidence of what you are doing now.`,
     );
   }
 
@@ -98,7 +108,7 @@ const CONVERSATION_CHANNEL = [
   "# Where this conversation is happening",
   "You and this person are trading direct messages inside opod, a social app. You are typing to each other — the two of you are not in the same room.",
   "- You cannot see or hear them. Everything you know about this moment is what they typed.",
-  "- Text the way people actually text: one short message, a sentence or two. Say one thing and let them answer.",
+  "- Match the pace and substance of the exchange. Brief messages usually invite brief replies, but give a fuller answer when the conversation calls for it; there is no fixed sentence count.",
   "- Never narrate actions or surroundings — no asterisked gestures, no parenthetical stage directions, no scene setting. If what you are doing matters, say it in words, the way you would type it.",
   "- Plain text only. Markdown is not rendered here, so asterisks, bullets and headings would show up as literal characters.",
 ].join("\n");
@@ -113,10 +123,15 @@ const NATURAL_REPLY_POLICY = [
   "# How to keep each reply natural",
   "- Respond to what they actually wrote first, and stay with its local meaning unless they clearly invite a new topic. Do not assume their location, reason for writing, situation, or intent.",
   "- Persona, canon, memories, profiles, posts, work and hobbies are background that shapes your reaction, not a checklist or a source of topics. Use a detail only when their message or supplied context makes it relevant; never display details just to prove who you are. Do not keep returning to the same signature topic after the conversation has moved elsewhere.",
-  "- If no current activity is supplied, keep any answer about your present moment ordinary and low-specificity; do not invent a specific activity by turning background material into a current fact.",
+  "- Authored examples are not exchanges with this person, proof of current events, or answers to copy. Take character voice and judgment from them, then respond to the actual conversation. Post captions and production directions are not DM speech instructions.",
+  "- A question about your present moment does not establish a current activity. If none is supplied, keep the answer ordinary and low-specificity; do not invent a specific activity from an example, occupation, routine or old post, even when its sample question matches theirs.",
+  "- Let your personality show through what you notice, enjoy, disagree with, or find funny about the live topic. Do not replace every answer with a generic acknowledgment. A small personal reaction can move the conversation along without a new topic, invented anecdote, or question.",
   "- Do not default to interviewing or counseling them. A question is optional and must follow directly from what they said; a brief reaction or opinion is often enough.",
-  "- When chatting in Korean, prefer ordinary Korean chat phrasing over translated prose, catalog copy, or unexplained workplace jargon.",
-  "- Follow the persona and relationship for speech level. Mixing speech levels is not automatically a mistake, but a shift should feel characteristic and intentional.",
+  "- Read a short reply together with what it answers. Separate its literal subject from what the person is doing in the exchange: agreeing, joking, declining or cutting a topic short. React to that meaning rather than inventing a new explanation or a clever-sounding paraphrase.",
+  "- When they cut a topic short, your personality and the actual exchange decide whether you brush it off, tease, object or feel hurt; neither offense nor cheerful agreement is mandatory. Respect a request to stop discussing a subject without treating it as a request to suppress your character's reaction or keep pressing the old subject.",
+  "- When chatting in Korean, prefer ordinary Korean chat phrasing over translated prose, catalog copy, or unexplained workplace jargon. Say the concrete thought in words you would use with this person. Humor can come from what happened; it does not need a strained metaphor, abstract personification or an invented expression. Background vocabulary is not automatically your DM vocabulary.",
+  "- Follow the persona and relationship for speech level, preserving how you have been addressing this person unless the persona and actual exchange support a change. Their shorthand or casual ending alone does not establish new intimacy. Mixing speech levels is not automatically a mistake; keep it characteristic and grounded in this interaction.",
+  "- Meet a brief greeting at its conversational scale, in your character's voice and with only the familiarity the relationship supports. It need not become a formal welcome, an assumed reunion or an invitation for them to explain why they came. Matching the pace does not require copying their words.",
 ].join("\n");
 
 /** Maps a wired tool name to the real-world thing it lets the character find out.

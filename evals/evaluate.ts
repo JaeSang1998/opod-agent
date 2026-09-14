@@ -116,7 +116,7 @@ interface StablePromptFingerprint {
 }
 
 interface MemoryPolicyObservation {
-  version: 1;
+  version: PromptDebugMetadata["memoryPolicyVersion"];
   retrievalConfig: PromptDebugMetadata["retrievalConfig"];
 }
 
@@ -416,6 +416,9 @@ function commonCriteria(evaluationMode: EvaluationMode): JudgeCriterion[] {
 export async function runTrajectory(options: RunTrajectoryOptions): Promise<TrajectoryResult> {
   const { scenario, target, simulator } = options;
   const evaluationMode = options.evaluationMode ?? "h30";
+  if (scenario.conversationDesign && evaluationMode !== "diagnostic") {
+    throw new Error("reactive pilots are diagnostic only, never certification runs");
+  }
   const requestedTurns = options.turns ?? scenario.targetTurns;
   if (!Number.isSafeInteger(requestedTurns) || requestedTurns <= 0 || requestedTurns > scenario.targetTurns) {
     throw new Error(`turns must be between 1 and ${scenario.targetTurns}`);
@@ -503,6 +506,9 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
         messages: retained,
         identity,
       });
+      if (scenario.conversationDesign && (!reply.text.trim() || reply.finishReason !== "stop")) {
+        throw new Error("reactive pilot received an empty or incomplete reply");
+      }
       const hasPromptDebug = reply.promptDebug !== undefined;
       if (promptDebugAvailable !== undefined && promptDebugAvailable !== hasPromptDebug) {
         throw new Error("prompt debug metadata availability changed during trajectory");
@@ -631,6 +637,7 @@ export async function runTrajectory(options: RunTrajectoryOptions): Promise<Traj
     options.judge?.model !== simulator.model &&
     simulator.model !== target.model;
   const passed =
+    !scenario.conversationDesign &&
     evaluationMode !== "structure" &&
     criticalPassed &&
     deterministic.passed &&
@@ -1543,6 +1550,18 @@ function simulatorTurnPrompt(
   phaseInstruction: string,
   evaluationMode: EvaluationMode,
 ): string {
+  if (scenario.conversationDesign) {
+    // Only user-visible turns. Do not expose rubric, hidden canon, future beats,
+    // source metadata, or a desired character reaction to the user simulator.
+    return [
+      "Respond to the last visible message using only your own supplied situation. Do not force a topic, agreement, or a closing line. If it is unclear, react naturally rather than inventing a premise.",
+      "Conversation so far:",
+      JSON.stringify(transcript.flatMap(entry => [
+        { role: "user", content: entry.user },
+        { role: "assistant", content: entry.assistant },
+      ])),
+    ].join("\n\n");
+  }
   const conversation = transcript.length ? formatTranscript(transcript) : "(conversation has not started)";
   const futureAnchors = scenario.scriptedTurns.filter((anchor) => anchor.turn > turn);
   const futureAnchorSummary = evaluationMode === "diagnostic"

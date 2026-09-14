@@ -26,13 +26,38 @@ function fixture() {
   };
 }
 
+function oracleFixture() {
+  const input = fixture();
+  return {
+    ...input,
+    selectorMode: "fixed_oracle_diagnostic_only",
+    conditions: input.conditions.map((condition) => ({
+      ...condition,
+      personas: condition.personas.map((persona) => ({
+        ...persona,
+        blocks: [...persona.blocks, {
+          id: `${persona.characterId}-lore`, title: "Background", content: `A specific past event for ${persona.characterId}.`,
+          injection: condition.id === "original" ? "always" : "retrieved",
+        }],
+      })),
+    })),
+    cases: input.cases.map((item) => ({
+      ...item,
+      oracleSelections: input.conditions.flatMap((condition) => condition.personas.map((persona) => ({
+        conditionId: condition.id, characterId: persona.characterId,
+        blockIds: condition.id !== "original" && item.id === "followup" ? [`${persona.characterId}-lore`] : [],
+      }))),
+    })),
+  };
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("fixed Persona comparisons", () => {
-  it("pins input bytes so even valid JSON changed after review cannot enter a comparison", async () => {
+  it.each(["empty", "oracle"])("pins %s input bytes so changes after review cannot enter a comparison", async (mode) => {
     const root = await mkdtemp(join(tmpdir(), "opod-comparison-"));
     try {
-      const input = fixture();
+      const input = mode === "oracle" ? oracleFixture() : fixture();
       const hash = (text: string) => createHash("sha256").update(text).digest("hex");
       const conditions = [];
       for (const c of input.conditions) {
@@ -44,7 +69,10 @@ describe("fixed Persona comparisons", () => {
       await writeFile(join(root, "cases.json"), cases);
       const { cases: _cases, conditions: _conditions, ...settings } = input;
       await writeFile(join(root, "manifest.json"), JSON.stringify({ ...settings, conditions, casesFile: "cases.json", casesSha256: hash(cases) }));
-      expect((await loadPersonaComparison(join(root, "manifest.json"))).fixture.conditions).toHaveLength(3);
+      const loaded = (await loadPersonaComparison(join(root, "manifest.json"))).fixture;
+      expect(loaded.conditions).toHaveLength(3);
+      expect(loaded.selectorMode).toBe(mode === "oracle" ? "fixed_oracle_diagnostic_only" : "fixed_empty_diagnostic_only");
+      expect(loaded.cases.map((item) => item.oracleSelections)).toEqual(input.cases.map((item) => "oracleSelections" in item ? item.oracleSelections : undefined));
       await writeFile(join(root, "cases.json"), `${cases} `);
       await expect(loadPersonaComparison(join(root, "manifest.json"))).rejects.toThrow("input hash mismatch");
     } finally { await rm(root, { recursive: true, force: true }); }
@@ -56,7 +84,7 @@ describe("fixed Persona comparisons", () => {
     const input = fixture();
     const before = structuredClone(input);
     const result = await runPersonaComparison(input, { mode: "preflight", maxCalls: 24, env: {} });
-    expect(result).toMatchObject({ completedCalls: 24, externalModelCalls: 0, structurePassed: true, qualityPassed: false, certificationEligible: false });
+    expect(result).toMatchObject({ completedCalls: 24, externalModelCalls: 0, structurePassed: true, qualityPassed: false, certificationEligible: false, selectorMode: "fixed_empty_diagnostic_only" });
     expect(chat).toHaveBeenCalledTimes(24);
     expect(embed).not.toHaveBeenCalled();
     expect(input).toEqual(before);
@@ -71,6 +99,49 @@ describe("fixed Persona comparisons", () => {
       expect(o.promptDebug?.personaProvenance?.sources.find((s) => s.id.endsWith("-example"))?.destination)
         .toBe(o.conditionId === "no-examples" ? "excluded" : "system_prompt");
     }
+  });
+
+  it("routes frozen per-case oracle IDs through the real target without claiming automatic selection quality", async () => {
+    const chat = vi.spyOn(FakeProvider.prototype, "chat");
+    const embed = vi.spyOn(FakeProvider.prototype, "embed");
+    const input = oracleFixture();
+    const before = structuredClone(input);
+    const result = await runPersonaComparison(input, { mode: "preflight", maxCalls: 24, env: {} });
+    expect(result).toMatchObject({ completedCalls: 24, externalModelCalls: 0, selectorMode: "fixed_oracle_diagnostic_only", qualityPassed: false, certificationEligible: false });
+    expect(embed).not.toHaveBeenCalled();
+    expect(input).toEqual(before);
+    for (const [index, observation] of result.observations.entries()) {
+      const expected = observation.conditionId === "original" ? "system_prompt" : observation.caseId === "followup" ? "turn_context" : "excluded";
+      expect(observation.promptDebug?.personaProvenance?.sources.find((s) => s.id === `${observation.characterId}-lore`)?.destination).toBe(expected);
+      const payload = JSON.stringify(chat.mock.calls[index]![0].messages);
+      expect(payload.includes(`A specific past event for ${observation.characterId}.`)).toBe(expected !== "excluded");
+      expect(payload).not.toContain(`A specific past event for ${observation.characterId === "one" ? "two" : "one"}.`);
+      if (observation.conditionId !== "original") expect(payload).not.toContain("A production note.");
+    }
+  });
+
+  it.each(["missing", "duplicate", "unknown condition", "unknown character", "foreign source", "never source", "stable source", "unknown source", "duplicate source", "wrong mode"])("rejects oracle %s before any completion", async (failure) => {
+    const chat = vi.spyOn(FakeProvider.prototype, "chat");
+    const input = oracleFixture();
+    const selections = input.cases[1]!.oracleSelections;
+    const entry = selections.find((s) => s.conditionId === "split" && s.characterId === "one")!;
+    if (failure === "missing") selections.pop();
+    if (failure === "duplicate") selections.push(structuredClone(entry));
+    if (failure === "unknown condition") entry.conditionId = "missing";
+    if (failure === "unknown character") entry.characterId = "missing";
+    if (failure === "foreign source") entry.blockIds = ["two-lore"];
+    if (failure === "never source") entry.blockIds = ["one-note"];
+    if (failure === "stable source") entry.blockIds = ["one-voice"];
+    if (failure === "unknown source") entry.blockIds = ["missing"];
+    if (failure === "duplicate source") entry.blockIds.push("one-lore");
+    if (failure === "wrong mode") input.selectorMode = "fixed_empty_diagnostic_only";
+    await expect(runPersonaComparison(input, { mode: "preflight", maxCalls: 24, env: {} })).rejects.toThrow();
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it("does not silently substitute empty selection for an oracle case with no selection contract", async () => {
+    const input = { ...fixture(), selectorMode: "fixed_oracle_diagnostic_only" };
+    await expect(runPersonaComparison(input, { mode: "preflight", maxCalls: 24, env: {} })).rejects.toThrow();
   });
 
   it.each(["canon", "duplicate", "prefix", "budget"])("rejects %s drift before any completion", async (failure) => {
