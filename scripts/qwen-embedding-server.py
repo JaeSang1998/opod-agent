@@ -1,4 +1,4 @@
-"""Loopback-only Qwen embeddings for local OPOD; see the local-Qwen runbook."""
+"""Authenticated Qwen embeddings for OPOD; see the local-Qwen runbook."""
 
 import base64
 import hmac
@@ -19,7 +19,10 @@ DIMENSIONS = 1024
 def main():
     api_key = os.environ["QWEN_API_KEY"]
     if len(api_key) < 16:
-        raise ValueError("A local embedding token of at least 16 characters is required")
+        raise ValueError("An embedding token of at least 16 characters is required")
+    bind_host = os.environ.get("QWEN_HOST", "127.0.0.1")
+    if bind_host not in ("127.0.0.1", "0.0.0.0"):
+        raise ValueError("QWEN_HOST must be a loopback or all-interface bind address")
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     model = SentenceTransformer(
         MODEL_ID, revision=REVISION, device=device,
@@ -91,7 +94,7 @@ def main():
             except Exception:
                 self.respond(500, {"error": "embedding_failed"})
 
-    server = ThreadingHTTPServer(("127.0.0.1", int(os.environ.get("QWEN_PORT", "8788"))), Handler)
+    server = ThreadingHTTPServer((bind_host, int(os.environ.get("QWEN_PORT", "8788"))), Handler)
     print(json.dumps({"ready": True, "model": MODEL_ID, "device": device}), flush=True)
     server.serve_forever()
 

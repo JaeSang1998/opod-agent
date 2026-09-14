@@ -1,0 +1,37 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/opt/qwen-hf-cache \
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=4 \
+    QWEN_HOST=0.0.0.0 \
+    QWEN_PORT=8788
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir torch==2.8.0 \
+      --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir \
+      sentence-transformers==5.1.2 \
+      transformers==4.57.6 \
+      huggingface-hub==0.36.2 \
+      tokenizers==0.22.2 \
+      safetensors==0.8.0 \
+      numpy==2.5.3 \
+    && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('Qwen/Qwen3-Embedding-0.6B', revision='97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3', trust_remote_code=False)"
+
+COPY scripts/qwen-embedding-server.py /app/qwen-embedding-server.py
+
+RUN useradd --create-home --uid 10001 qwen \
+    && chown -R qwen:qwen /opt/qwen-hf-cache /app
+
+USER qwen
+
+EXPOSE 8788
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=12 \
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8788/health', timeout=3).read()"]
+
+CMD ["python", "/app/qwen-embedding-server.py"]

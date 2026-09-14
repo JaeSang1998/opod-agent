@@ -15,6 +15,18 @@ cp .env.example .env      # fill in LLM_API_KEY (OpenAI) or point at Ollama
 npm run dev               # http://localhost:8787
 ```
 
+The pinned 1024-dimensional Qwen embedding service also has a CPU deployment image:
+
+```bash
+docker build -f docker/Dockerfile.embedding -t opod-qwen-embedding .
+docker run --rm -e QWEN_API_KEY=replace-with-a-long-random-token opod-qwen-embedding
+```
+
+Keep port 8788 private to the application network in shared environments. Set
+`QWEN_HOST=127.0.0.1` for a host-local process; the container defaults to `0.0.0.0`
+so sibling containers can reach it. The image pins the model revision and serves
+`Qwen/Qwen3-Embedding-0.6B` with 1024 dimensions.
+
 Point at **OpenAI**:
 
 ```
@@ -114,6 +126,11 @@ opod-worker ──(memory-update job)──▶ opod-agent /memory/consolidate  (
 Persona / Memory / Job-queue access sits behind `PersonaStore`, `MemoryStore`, and `JobQueue`
 interfaces. `DATABASE_URL` automatically enables the built-in Postgres persona,
 memory, and queue implementations; DB-less tests use in-memory stores.
+
+When pgvector is installed in PostgreSQL's `public` schema, keep both application and extension
+schemas in the connection search path (for example, `options=-c search_path=opod,public`). Semantic
+retrieval uses pgvector operators and falls back to lexical retrieval if those operators are not
+resolvable.
 
 ## Connecting another LLM Provider or database
 
