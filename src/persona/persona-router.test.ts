@@ -13,6 +13,7 @@ const persona: Persona = {
       content: "Keeps a dry sense of humor.",
       kind: "identity",
       injection: "always",
+      sourceSchemaVersion: 2,
     },
     {
       id: "voice",
@@ -84,6 +85,10 @@ describe("routePersona", () => {
         reason: "never_prompt",
       }),
     ]);
+    expect(routed.provenance.schemaVersion).toBe(1);
+    expect(routed.provenance.sources[0]).toMatchObject({
+      id: "identity", sourceSchemaVersion: 2,
+    });
   });
 
   it("drops start-only and unselected retrieved blocks after the first turn", () => {

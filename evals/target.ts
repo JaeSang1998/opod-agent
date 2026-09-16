@@ -492,6 +492,11 @@ const PERSONA_KINDS = new Set([
   "greeting",
   "lore",
   "creator_note",
+  "motivation",
+  "judgment",
+  "tension",
+  "relationship",
+  "boundary",
 ]);
 const PERSONA_INJECTIONS = new Set([
   "always",
@@ -558,6 +563,7 @@ function parsePersonaSourceProvenance(value: unknown): PromptPersonaSourceProven
     PERSONA_DESTINATIONS.has(value.destination) &&
     typeof value.reason === "string" &&
     PERSONA_REASONS.has(value.reason) &&
+    (value.sourceSchemaVersion === undefined || value.sourceSchemaVersion === 1 || value.sourceSchemaVersion === 2) &&
     personaRouteFieldsAgree(value);
   if (!validShape) throw new Error("target returned invalid persona provenance metadata");
   return {
@@ -567,6 +573,9 @@ function parsePersonaSourceProvenance(value: unknown): PromptPersonaSourceProven
     mapping: value.mapping as PromptPersonaSourceProvenance["mapping"],
     destination: value.destination as PromptPersonaSourceProvenance["destination"],
     reason: value.reason as PromptPersonaSourceProvenance["reason"],
+    ...(value.sourceSchemaVersion === undefined ? {} : {
+      sourceSchemaVersion: value.sourceSchemaVersion as 1 | 2,
+    }),
   };
 }
 

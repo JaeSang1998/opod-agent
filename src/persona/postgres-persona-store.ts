@@ -61,8 +61,17 @@ interface BlockRow {
   id: string;
   title: string;
   content: string;
+  schema_version: number;
   fragments?: unknown;
 }
+
+const personaV2Kinds = new Set([
+  "identity", "motivation", "judgment", "tension", "relationship",
+  "voice", "boundary", "example", "greeting", "creator_note",
+]);
+const personaV2OnlyKinds = new Set([
+  "motivation", "judgment", "tension", "relationship", "boundary",
+]);
 
 interface MemoryRow {
   id: string;
@@ -171,7 +180,7 @@ export class PostgresPersonaStore implements PersonaStore {
 
     const [blocks, memories] = await Promise.all([
       this.pool.query<BlockRow>(
-        `SELECT id, title, content,
+        `SELECT id, title, content, schema_version,
          (SELECT json_agg(json_build_object(
            'id', f.id, 'ordinal', f.ordinal, 'content', f.content, 'kind', f.kind,
            'injection', f.injection, 'recallKeys', f.recall_keys) ORDER BY f.ordinal)
@@ -200,7 +209,17 @@ export class PostgresPersonaStore implements PersonaStore {
       characterId: row.id,
       name: row.display_name,
       bio: row.bio,
-      blocks: blocks.rows.map((b) => ({ id: b.id, title: b.title, content: b.content })),
+      blocks: blocks.rows.map((b) => {
+        if (b.schema_version !== 1 && b.schema_version !== 2) {
+          throw new PersonaContextIntegrityError(
+            `unsupported persona source schema version for ${b.id}: ${String(b.schema_version)}`,
+          );
+        }
+        return {
+          id: b.id, title: b.title, content: b.content,
+          sourceSchemaVersion: b.schema_version,
+        };
+      }),
       canonMemories: memories.rows.map((m) => ({
         id: m.id, type: m.type, content: m.content, reason: m.reason,
         createdAt: m.created_at, updatedAt: m.updated_at,
@@ -212,12 +231,42 @@ export class PostgresPersonaStore implements PersonaStore {
       })),
     });
     for (const block of blocks.rows) {
-      if (block.fragments == null) continue;
-      const fragments = StoredFragments.parse(block.fragments);
+      if (block.fragments == null) {
+        if (block.schema_version === 2) {
+          throw new PersonaContextIntegrityError(
+            `persona schema v2 source ${block.id} requires persisted fragments`,
+          );
+        }
+        continue;
+      }
+      const parsed = StoredFragments.safeParse(block.fragments);
+      if (!parsed.success) {
+        throw new PersonaContextIntegrityError(
+          `invalid persisted persona fragments for schema v${block.schema_version} source ${block.id}`,
+        );
+      }
+      const fragments = parsed.data;
       const first = fragments[0];
       if (!first || fragments.some((f, i) => f.ordinal !== i)
         || fragments.map((f) => f.content).join("") !== block.content) {
-        throw new Error("persisted persona fragments do not preserve their source");
+        throw new PersonaContextIntegrityError(
+          `persisted persona fragments for source ${block.id} must be contiguous and preserve their source`,
+        );
+      }
+      if (block.schema_version === 1 && fragments.some(f => personaV2OnlyKinds.has(f.kind))) {
+        throw new PersonaContextIntegrityError(
+          `persona schema v1 source ${block.id} contains a v2-only fragment kind`,
+        );
+      }
+      if (block.schema_version === 2) {
+        const invalid = fragments.find(f => !personaV2Kinds.has(f.kind)
+          || (f.kind === "creator_note" && f.injection !== "never_prompt")
+          || (f.kind === "greeting" && f.injection !== "start_only"));
+        if (invalid) {
+          throw new PersonaContextIntegrityError(
+            `persona schema v2 source ${block.id} contains invalid ${invalid.kind}/${invalid.injection} policy`,
+          );
+        }
       }
       if (fragments.length === 1) {
         const { kind, injection, recallKeys } = first;

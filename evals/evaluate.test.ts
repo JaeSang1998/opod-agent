@@ -913,6 +913,7 @@ describe("suite and Harbor artifacts", () => {
                 mapping: "explicit",
                 destination: "turn_context",
                 reason: "retrieved_for_turn",
+                sourceSchemaVersion: 2,
                 content: "must not cross from persona provenance",
               },
               {
@@ -977,6 +978,7 @@ describe("suite and Harbor artifacts", () => {
         id: "persona-lore-1",
         destination: "turn_context",
         reason: "retrieved_for_turn",
+        sourceSchemaVersion: 2,
       }),
       expect.objectContaining({
         id: "persona-note-1",

@@ -26,6 +26,8 @@ export interface PromptPersonaSourceProvenance {
   mapping: "explicit" | "legacy";
   destination: PersonaPromptDestination;
   reason: PersonaRoutingReason;
+  /** Persisted source contract version; not the routing result schema version. */
+  sourceSchemaVersion?: 1 | 2;
 }
 
 export interface PromptPersonaProvenance {
@@ -104,6 +106,9 @@ export function routePersona(input: RoutePersonaInput): RoutedPersona {
         reason: isLegacyGreeting
           ? "legacy_reactive_greeting_excluded"
           : "legacy_default_always",
+        ...(block.sourceSchemaVersion === undefined ? {} : {
+          sourceSchemaVersion: block.sourceSchemaVersion,
+        }),
       });
       return;
     }
@@ -113,6 +118,9 @@ export function routePersona(input: RoutePersonaInput): RoutedPersona {
       kind: block.kind ?? null,
       injection: block.injection,
       mapping: "explicit" as const,
+      ...(block.sourceSchemaVersion === undefined ? {} : {
+        sourceSchemaVersion: block.sourceSchemaVersion,
+      }),
     };
     switch (block.injection) {
       case "always":

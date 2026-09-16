@@ -12,6 +12,11 @@ export const PersonaBlockKind = z.enum([
   "greeting",
   "lore",
   "creator_note",
+  "motivation",
+  "judgment",
+  "tension",
+  "relationship",
+  "boundary",
 ]);
 
 export const PersonaInjection = z.enum([
@@ -20,6 +25,8 @@ export const PersonaInjection = z.enum([
   "retrieved",
   "never_prompt",
 ]);
+
+const PersonaSourceSchemaVersion = z.union([z.literal(1), z.literal(2)]);
 
 export const PersonaBlock = z.object({
   /** Stable source-row id. Legacy/custom stores may omit it until routed. */
@@ -33,6 +40,8 @@ export const PersonaBlock = z.object({
   injection: PersonaInjection.optional(),
   /** Explicit recall cues, kept out of rendered content. */
   recallKeys: z.array(z.string().trim().min(1)).optional(),
+  /** Persisted source contract version; distinct from routing/provenance versions. */
+  sourceSchemaVersion: PersonaSourceSchemaVersion.optional(),
 });
 
 /** Authored character memory, distinct from learned user observations. */

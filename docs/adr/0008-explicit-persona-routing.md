@@ -109,10 +109,14 @@ DB; human review required before merge. No development DB changes or deployment.
   replaces source/fragments plus audit log. Concatenation must exactly preserve the new source.
   Source-only legacy PATCH on a structured row returns 409. Classification-only writes preserve
   source timestamps. The hash protects source-content changes, not concurrent policy-only editing.
-- PostgresPersonaStore reads source and fragments in one SQL snapshot, validates completeness,
-  and reuses projectPersonaSources for multiple fragments. Malformed/stale nonempty fragment sets
-  fail closed. No child rows means legacy: deleting every child through direct SQL is indistinguishable
-  from an unclassified source. The API rejects empty splits and commits replacements atomically.
+- PostgresPersonaStore reads each source's `schema_version` and fragments in one SQL snapshot,
+  validates completeness, and reuses projectPersonaSources for multiple fragments. Schema v1 keeps
+  the legacy no-child fallback; schema v2 requires a complete fragment set and admits only identity,
+  motivation, judgment, tension, relationship, voice, boundary, example, greeting and creator_note.
+  V2 greeting is start_only and creator_note is never_prompt. Unknown versions, v2 behavior/lore,
+  malformed policy, gaps, duplicates and source reconstruction mismatches fail closed. Source schema
+  version is preserved on blocks and content-free debug provenance; it does not replace routing-result
+  provenance `schemaVersion: 1`. The API rejects empty splits and commits replacements atomically.
   Router/recall still own prompt selection.
 - Migration must precede this reader/admin code. A persisted structured character needs no manifest;
   do not layer its old manifest onto already projected blocks. Removing a manifest no longer rolls

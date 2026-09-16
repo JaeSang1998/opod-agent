@@ -23,6 +23,11 @@ describe("assembleSystemPrompt", () => {
     ["example", "Example: an illustration of character"],
     ["greeting", "Greeting: first-contact guidance"],
     ["creator_note", "Creator note: authoring context"],
+    ["motivation", "Motivation: what you pursue or avoid"],
+    ["judgment", "Judgment: how you make choices and tradeoffs"],
+    ["tension", "Tension: recurring contradictions and vulnerabilities"],
+    ["relationship", "Relationship: how closeness and conflict change your response"],
+    ["boundary", "Boundary: values and limits you do not casually abandon"],
   ] as const)("keeps explicit %s purpose even when the source title is ambiguous", (kind, purpose) => {
     const content = "  Authored text stays verbatim.\nSecond line.  ";
     const out = assembleSystemPrompt({ persona: { ...persona, blocks: [

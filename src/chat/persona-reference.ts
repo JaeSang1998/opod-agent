@@ -8,6 +8,11 @@ const PURPOSE: Readonly<Record<PersonaBlockKind, string>> = {
   example: "Example: an illustration of character, not this person's history or a script to continue.",
   greeting: "Greeting: first-contact guidance, not proof of a reunion or shared past.",
   creator_note: "Creator note: authoring context, not words or production directions to send in a DM.",
+  motivation: "Motivation: what you pursue or avoid, not a topic to announce.",
+  judgment: "Judgment: how you make choices and tradeoffs in this exchange.",
+  tension: "Tension: recurring contradictions and vulnerabilities, not a mandatory dramatic beat.",
+  relationship: "Relationship: how closeness and conflict change your response, without inventing familiarity.",
+  boundary: "Boundary: values and limits you do not casually abandon.",
 };
 
 /** The router owns selection; render only explicit roles, preserving source text. */

@@ -112,7 +112,7 @@ describe("PostgresPersonaStore", () => {
   it("reads persisted fragment policy and canon routing without an external manifest", async () => {
     const { pool } = fakePool({
       "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
-      "opod.character_personas": [{ id: "p1", title: "Mixed", content: "차분함.과거 사건.", fragments: [
+      "opod.character_personas": [{ id: "p1", title: "Mixed", content: "차분함.과거 사건.", schema_version: 1, fragments: [
         { id: "f1", ordinal: 0, content: "차분함.", kind: "behavior", injection: "always", recallKeys: [] },
         { id: "f2", ordinal: 1, content: "과거 사건.", kind: "lore", injection: "retrieved", recallKeys: ["과거"] },
       ] }],
@@ -127,10 +127,101 @@ describe("PostgresPersonaStore", () => {
     expect(persona?.canonMemories[0]).toMatchObject({ kind: "event", injection: "retrieved", recallKeys: ["여행"] });
   });
 
+  it("keeps valid v1 legacy fallback and valid v2 fragments in one character", async () => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [
+        { id: "legacy", title: "Legacy", content: "기존 원문", schema_version: 1 },
+        { id: "v2", title: "V2", content: "목표.첫 인사.", schema_version: 2, fragments: [
+          { id: "f1", ordinal: 0, content: "목표.", kind: "motivation", injection: "always", recallKeys: [] },
+          { id: "f2", ordinal: 1, content: "첫 인사.", kind: "greeting", injection: "start_only", recallKeys: [] },
+        ] },
+      ],
+    });
+
+    const persona = await new PostgresPersonaStore(pool).get("c1");
+
+    expect(persona?.blocks).toEqual([
+      { id: "legacy", title: "Legacy", content: "기존 원문", sourceSchemaVersion: 1 },
+      { id: expect.any(String), storedFragmentId: "f1", title: "V2", content: "목표.", kind: "motivation", injection: "always", recallKeys: [], sourceSchemaVersion: 2 },
+      { id: expect.any(String), storedFragmentId: "f2", title: "V2", content: "첫 인사.", kind: "greeting", injection: "start_only", recallKeys: [], sourceSchemaVersion: 2 },
+    ]);
+  });
+
+  it("rejects a v2 source without fragments instead of applying legacy fallback", async () => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [{ id: "v2", title: "V2", content: "분류되지 않은 원문", schema_version: 2 }],
+    });
+
+    await expect(new PostgresPersonaStore(pool).get("c1"))
+      .rejects.toThrow(/schema v2.*fragment/i);
+  });
+
+  it.each([
+    ["behavior kind", { kind: "behavior", injection: "always" }],
+    ["lore kind", { kind: "lore", injection: "retrieved" }],
+    ["creator note injection", { kind: "creator_note", injection: "always" }],
+    ["greeting injection", { kind: "greeting", injection: "always" }],
+  ])("rejects an invalid v2 %s from an alternate writer", async (_case, policy) => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [{ id: "v2", title: "V2", content: "원문", schema_version: 2, fragments: [
+        { id: "f1", ordinal: 0, content: "원문", ...policy, recallKeys: [] },
+      ] }],
+    });
+
+    await expect(new PostgresPersonaStore(pool).get("c1"))
+      .rejects.toThrow(/schema v2/i);
+  });
+
+  it("rejects an unknown source schema version", async () => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [{ id: "future", title: "Future", content: "원문", schema_version: 3 }],
+    });
+
+    await expect(new PostgresPersonaStore(pool).get("c1"))
+      .rejects.toThrow(/unsupported persona source schema version.*3/i);
+  });
+
+  it("rejects a v2-only kind mislabeled as schema v1", async () => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [{ id: "v1", title: "V1", content: "동기", schema_version: 1, fragments: [
+        { id: "f1", ordinal: 0, content: "동기", kind: "motivation", injection: "always", recallKeys: [] },
+      ] }],
+    });
+
+    await expect(new PostgresPersonaStore(pool).get("c1"))
+      .rejects.toThrow(/schema v1.*v2-only/i);
+  });
+
+  it.each([
+    ["ordinal gap", "전체", [
+      { id: "f1", ordinal: 1, content: "전체", kind: "identity", injection: "always", recallKeys: [] },
+    ]],
+    ["duplicate ordinal", "앞뒤", [
+      { id: "f1", ordinal: 0, content: "앞", kind: "identity", injection: "always", recallKeys: [] },
+      { id: "f2", ordinal: 0, content: "뒤", kind: "voice", injection: "always", recallKeys: [] },
+    ]],
+    ["reconstruction mismatch", "현재", [
+      { id: "f1", ordinal: 0, content: "과거", kind: "identity", injection: "always", recallKeys: [] },
+    ]],
+  ])("rejects a v2 source with a %s", async (_case, content, fragments) => {
+    const { pool } = fakePool({
+      "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
+      "opod.character_personas": [{ id: "v2", title: "V2", content, schema_version: 2, fragments }],
+    });
+
+    await expect(new PostgresPersonaStore(pool).get("c1"))
+      .rejects.toThrow(/contiguous.*preserve/i);
+  });
+
   it("rejects stale or incomplete persisted fragments instead of injecting the unsplit source", async () => {
     const { pool } = fakePool({
       "opod.characters": [{ id: "c1", display_name: "Synthetic", bio: "" }],
-      "opod.character_personas": [{ id: "p1", title: "Mixed", content: "changed", fragments: [
+      "opod.character_personas": [{ id: "p1", title: "Mixed", content: "changed", schema_version: 1, fragments: [
         { ordinal: 0, content: "old", kind: "behavior", injection: "always", recallKeys: [] },
       ] }],
     });
@@ -141,8 +232,8 @@ describe("PostgresPersonaStore", () => {
     const { pool, calls } = fakePool({
       "opod.characters": [{ id: "c1", display_name: "한소이", bio: "필름 카메라로 계절을 줍는 사람" }],
       "opod.character_personas": [
-        { id: "p1", title: "성격", content: "내향적 관찰자" },
-        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장" },
+        { id: "p1", title: "성격", content: "내향적 관찰자", schema_version: 1 },
+        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장", schema_version: 1 },
       ],
       "opod.character_canon_memories": [{
         id: "m1", type: "event", content: "2021년 12월 Canon AE-1을 샀다", reason: "Authored source reason.",
@@ -157,8 +248,8 @@ describe("PostgresPersonaStore", () => {
       name: "한소이",
       bio: "필름 카메라로 계절을 줍는 사람",
       blocks: [
-        { id: "p1", title: "성격", content: "내향적 관찰자" },
-        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장" },
+        { id: "p1", title: "성격", content: "내향적 관찰자", sourceSchemaVersion: 1 },
+        { id: "p2", title: "말투와 문체 가이드", content: "짧은 시적 문장", sourceSchemaVersion: 1 },
       ],
       canonMemories: [{
         id: "m1", type: "event", content: "2021년 12월 Canon AE-1을 샀다", reason: "Authored source reason.",
@@ -171,7 +262,7 @@ describe("PostgresPersonaStore", () => {
     expect(blockCall?.params).toEqual(["c1"]);
     expect(blockCall?.sql).toContain("deleted_at IS NULL");
     expect(blockCall?.sql).toContain("sort_order ASC");
-    expect(blockCall?.sql).toContain("SELECT id, title, content");
+    expect(blockCall?.sql).toContain("SELECT id, title, content, schema_version");
     const memoryCall = calls.find((c) => c.sql.includes("FROM opod.character_canon_memories\n"));
     expect(memoryCall?.params).toEqual(["c1"]);
     expect(memoryCall?.sql).toContain("SELECT id, authoring_category AS type, canon_text AS content");
