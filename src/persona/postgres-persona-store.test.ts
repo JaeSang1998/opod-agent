@@ -24,6 +24,34 @@ function fakePool(rowsByTable: Record<string, unknown[]>) {
 }
 
 describe("PostgresPersonaStore", () => {
+  it.skipIf(!process.env.TEST_DATABASE_URL)("keeps publication profiles out of chat while preserving common persona", async () => {
+    const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const id = randomUUID();
+      const personaId = randomUUID();
+      const publicationOnly = "캡션에는 출판전용암호를 넣는다";
+      await client.query("INSERT INTO opod.characters(id,public_id,display_name,bio,updated_at) VALUES($1,$2,'Synthetic','',now())", [id, `content-${id}`]);
+      await client.query("INSERT INTO opod.character_content_profiles(character_id,account_concept,caption_style) VALUES($1,'러닝 중심',$2)", [id, publicationOnly]);
+      await client.query("INSERT INTO opod.character_personas(id,character_id,title,content,schema_version,updated_at) VALUES($1,$2,'인물','차분한 성격.기존 제작전용암호.',2,now())", [personaId, id]);
+      await client.query(`INSERT INTO opod.character_persona_fragments(id,persona_id,ordinal,content,kind,injection,updated_at)
+        VALUES($1,$2,0,'차분한 성격.','judgment','always',now()),($3,$2,1,'기존 제작전용암호.','creator_note','never_prompt',now())`, [randomUUID(), personaId, randomUUID()]);
+      const store = new PostgresPersonaStore(client as unknown as Pool);
+      const persona = await store.get(id);
+      expect(persona).not.toBeNull();
+      expect(JSON.stringify(persona)).not.toContain(publicationOnly);
+      const { routePersona } = await import("./persona-router.js");
+      const routed = routePersona({ persona: persona!, isConversationStart: false, retrievedBlockIds: persona!.blocks.map(block => block.id!).filter(Boolean) });
+      const prompt = assembleSystemPrompt({ persona: routed.stablePersona });
+      expect(prompt).toContain("차분한 성격");
+      expect(prompt).not.toContain("제작전용암호");
+      expect(prompt).not.toContain("출판전용암호");
+    } finally {
+      try { await client.query("ROLLBACK"); } finally { client.release(); await pool.end(); }
+    }
+  });
+
   it.skipIf(!process.env.TEST_DATABASE_URL)("hybrid searches the scoped full set, rejects stale indexes and never fills unrelated results", async () => {
     const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
     const client = await pool.connect();
