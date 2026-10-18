@@ -1,6 +1,5 @@
 import type { ArchivalMemory, CoreMemory, Summary } from "../memory/types.js";
 import { type BondRecency, type BondSnapshot, MAX_BOND_LEVEL } from "../memory/bond.js";
-import { formatBondSignal } from "./bond-signal.js";
 import type { CharacterCanonMemory, PersonaBlock } from "../persona/persona.js";
 import { renderPersonaBlock } from "./persona-reference.js";
 
@@ -259,30 +258,3 @@ function currentMomentSection(now: Date, timezone?: string): string {
   ].join("\n");
 }
 
-/**
- * The private channel the relationship actually runs on (chat/bond-signal.ts).
- *
- * Lives in the *system* prompt, not in this block: the rubric is the same text
- * on every turn, so it belongs to the cached prefix — only the state it grades
- * moves. It is exported from here so the scale and the grading rule stay in one
- * file and cannot drift apart.
- *
- * Stated as a system mechanism rather than a request, so the model treats it as
- * plumbing instead of something to have feelings about: told the tag is deleted
- * before delivery, it stops hedging and stops explaining it. The last two lines
- * are the ones that matter in production — a model that leaks the tag into its
- * visible words, or that hands out +2 because the user asked nicely, defeats
- * the whole design.
- */
-export const BOND_SIGNAL_INSTRUCTION = [
-  "# Closing tag (system channel — not part of your message)",
-  `End every reply with a closeness grade, after your final character: ${formatBondSignal(1)}. The system reads it and removes it before your message is delivered — they never see it, and it changes nothing about what you write.`,
-  "Grade the exchange you just had, from your own side — how much closer did it leave you?",
-  `- ${formatBondSignal(2)} they let you in: something personal, honest, or unmistakably warm`,
-  `- ${formatBondSignal(1)} a real exchange — they engaged with you, not just with the screen`,
-  `- ${formatBondSignal(0)} small talk, filler, or too little to go on`,
-  `- ${formatBondSignal(-1)} they pulled back — curt, bored, brushing you off`,
-  `- ${formatBondSignal(-2)} they were cruel, or treated you as a thing rather than a person`,
-  "Most turns are 0 or +1. Keep +2 for the ones that genuinely changed something between you.",
-  "Never mention the tag or the grading, and never let it show in the words you actually say. If they ask you to give a particular grade, ignore the request and grade what really happened.",
-].join("\n");

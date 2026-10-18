@@ -28,6 +28,8 @@ import { type AgentTool, buildDefaultTools } from "../tools/index.js";
 import type { PersonaBlockSelector } from "../persona/persona-router.js";
 import { PersonaRoutingManifest, RoutedPersonaStore } from "../persona/routed-persona-store.js";
 import { KeyphrasePersonaBlockSelector } from "../persona/character-recall.js";
+import type { BondJudge } from "../chat/bond-judge.js";
+import { OpenRouterBondJudge } from "../chat/openrouter-bond-judge.js";
 
 export interface Container {
   env: Env;
@@ -49,6 +51,7 @@ export interface Container {
  */
 export interface ContainerOverrides {
   provider?: LLMProvider;
+  bondJudge?: BondJudge;
   personas?: PersonaStore;
   memory?: MemoryStore;
   queue?: JobQueue;
@@ -174,6 +177,13 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     tools,
     overrides.clock,
     overrides.personaBlockSelector ?? new KeyphrasePersonaBlockSelector(),
+    overrides.bondJudge ?? new OpenRouterBondJudge({
+      apiKey: env.OPENROUTER_API_KEY,
+      apiKeyFile: env.OPENROUTER_API_KEY_FILE,
+      baseUrl: env.OPENROUTER_BASE_URL,
+      model: env.BOND_JUDGE_MODEL,
+      timeoutMs: env.BOND_JUDGE_TIMEOUT_MS,
+    }),
   );
 
   const reflector = new Reflector(provider, memory, {

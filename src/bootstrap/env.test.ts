@@ -17,4 +17,18 @@ describe("loadEnv deployment safety", () => {
       }).DATABASE_URL,
     ).toBe("postgres://db/opod");
   });
+
+  it("keeps Decisions configuration independent from chat defaults", () => {
+    expect(loadEnv({})).toMatchObject({
+      OPENROUTER_API_KEY: "",
+      OPENROUTER_BASE_URL: "https://openrouter.ai",
+      BOND_JUDGE_MODEL: "typesafe/jev-1.13",
+      BOND_JUDGE_TIMEOUT_MS: 8_000,
+    });
+    expect(loadEnv({ BOND_JUDGE_MODEL: "explicit-model", BOND_JUDGE_TIMEOUT_MS: "500" }))
+      .toMatchObject({ BOND_JUDGE_MODEL: "explicit-model", BOND_JUDGE_TIMEOUT_MS: 500 });
+    for (const timeout of ["0", "-1", "Infinity", "120001"]) {
+      expect(() => loadEnv({ BOND_JUDGE_TIMEOUT_MS: timeout })).toThrow("BOND_JUDGE_TIMEOUT_MS");
+    }
+  });
 });

@@ -1,11 +1,9 @@
 /**
  * Bond — the (user, character) relationship progression.
  *
- * One stored number: `bondXp`, projected onto a level 1..5. It moves by a grade
- * the character itself hands back at the end of every turn (`-2..+2`, see
- * chat/bond-signal.ts). The model that just read the exchange is the only judge
- * with the context to say whether it left the two of them closer, so it says so
- * — no second pass, no proxy metric, no extra call.
+ * One stored number: `bondXp`, projected onto a level 1..5. It moves by one of
+ * five grades from the independent JEV Decisions judge after a successful chat.
+ * Invalid or unavailable judgements are skipped, never converted to neutral.
  *
  * Two rules keep the number honest:
  *
@@ -16,8 +14,7 @@
  *
  *   Positive XP is capped per service day. A user who buys a stack of credits
  *   should not be able to compress a month of relationship into one evening,
- *   and a self-reported grade is exactly the kind of signal a determined user
- *   will try to talk the character into inflating.
+ *   and users must not be able to inflate progression by requesting a score.
  *
  * How recently they have been in touch is *derived* from the last exchange, not
  * accumulated: closeness is a thing you earn, recency is a thing you read off a
@@ -30,9 +27,8 @@
 // ===== The grade =====
 
 /**
- * What the character reports about the exchange it just had. Five steps, not
- * nine: a model can tell "they let me in" from "they were done talking", but it
- * cannot hold a stable opinion about the difference between +3 and +4.
+ * The judge's assessment of the completed exchange. Five discrete steps:
+ * hostility, withdrawal, neutral, engagement, and meaningful connection.
  */
 export type BondGrade = -2 | -1 | 0 | 1 | 2;
 

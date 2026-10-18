@@ -6,6 +6,7 @@ import { OpenAICompatProvider } from "../src/provider/openai-compat-provider.js"
 import { StubJobQueue } from "../src/memory/stub-job-queue.js";
 import { StubMemoryStore } from "../src/memory/stub-memory-store.js";
 import { FakeProvider } from "../src/testing/fake-provider.js";
+import { unconfiguredBondJudge } from "../src/chat/bond-judge.js";
 import type { ToolLoopEvent } from "../src/chat/tool-loop.js";
 import type {
   PromptContextSectionName,
@@ -78,7 +79,7 @@ export interface ConversationTarget {
 type ConsolidationMode = "quiescent" | "batched" | "none";
 
 /** Local-only inputs. Remote targets cannot prove these overrides were applied. */
-type InProcessTargetOptions = Pick<ContainerOverrides, "provider" | "personas" | "clock" | "personaBlockSelector"> & {
+type InProcessTargetOptions = Pick<ContainerOverrides, "provider" | "personas" | "clock" | "personaBlockSelector" | "bondJudge"> & {
   personalization?: "none";
 };
 
@@ -118,7 +119,12 @@ class InProcessTarget implements ConversationTarget {
         }));
     // Supplying the raw provider deliberately bypasses the deployment LLM-log
     // decorator: a self-contained eval must work without DATABASE_URL.
-    this.container = buildContainer(loaded, { ...options, provider });
+    this.container = buildContainer(loaded, {
+      ...options, provider,
+      // Deterministic structural evaluation must never make a paid judge call.
+      // Explicit judge fixtures use the same typed port as product requests.
+      bondJudge: options.bondJudge ?? (providerMode === "deterministic" ? unconfiguredBondJudge : undefined),
+    });
     if (!(this.container.queue instanceof StubJobQueue)) {
       throw new Error("in-process evaluation requires StubJobQueue");
     }
