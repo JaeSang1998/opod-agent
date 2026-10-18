@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ChatService } from "./chat-service.js";
 import { StubPersonaStore } from "../persona/stub-persona-store.js";
 import { StubMemoryStore } from "../memory/stub-memory-store.js";
@@ -12,6 +12,7 @@ import type { ChatCompletionRequest } from "../protocol/index.js";
 import { BOND_XP_BY_GRADE } from "../memory/bond.js";
 import type { Persona } from "../persona/persona.js";
 import { PersonaContextIntegrityError, type PersonaStore } from "../persona/persona-store.js";
+import type { BondJudge } from "./bond-judge.js";
 
 const config = {
   retrieveTopK: 6,
@@ -23,6 +24,7 @@ const config = {
 function makeService(
   provider = new FakeProvider(),
   memory: MemoryStore = new StubMemoryStore(),
+  bondJudge: BondJudge = { judge: async () => ({ ok: true, grade: 2 }) },
 ) {
   const queue = new StubJobQueue();
   const service = new ChatService(
@@ -31,6 +33,7 @@ function makeService(
     memory,
     queue,
     config,
+    noopLogger, [], undefined, undefined, bondJudge,
   );
   return { service, queue, provider, memory };
 }
@@ -735,19 +738,26 @@ describe("ChatService.prepare server tools", () => {
 });
 
 describe("ChatService bond", () => {
-  it("moves the bond by the grade the reply carried", async () => {
+  it.each([-2, -1, 0, 1, 2] as const)("preserves stored XP arithmetic for selected grade %s", async grade => {
+    const memory = new StubMemoryStore();
+    const nowMs = Date.now();
+    await memory.grantBond(fullCtx, { grade: 2, nowMs }, "seed-1");
+    await memory.grantBond(fullCtx, { grade: 2, nowMs }, "seed-2");
+    const { service } = makeService(undefined, memory, { judge: async () => ({ ok: true, grade }) });
+    await (await service.prepare(body, fullCtx)).postTurn("actual reply");
+    expect((await memory.getRelationshipState(fullCtx)).bondXp).toBe(32 + BOND_XP_BY_GRADE[grade]);
+  });
+  it("moves the bond by the independent judge's selected grade", async () => {
     const { service, memory } = makeService();
     const prepared = await service.prepare(body, fullCtx);
-    await prepared.postTurn("고양이 이름 예쁘다", 2);
+    await prepared.postTurn("고양이 이름 예쁘다");
 
     const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
     expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
   });
 
-  it("counts a missing grade as neutral rather than skipping the turn", async () => {
-    // A model that forgot its tag must not leave the character acting distant:
-    // the write is also what records that they spoke just now.
-    const { service, memory } = makeService();
+  it("touches recency for a valid neutral judgement", async () => {
+    const { service, memory } = makeService(undefined, undefined, { judge: async () => ({ ok: true, grade: 0 }) });
     const before = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
     await new Promise((resolve) => setTimeout(resolve, 2));
     await (await service.prepare(body, fullCtx)).postTurn("응");
@@ -759,19 +769,71 @@ describe("ChatService bond", () => {
 
   it("grades a retried turn only once", async () => {
     const { service, memory } = makeService();
-    await (await service.prepare(body, fullCtx)).postTurn("응", 2);
-    await (await service.prepare(body, fullCtx)).postTurn("응", 2);
+    await (await service.prepare(body, fullCtx)).postTurn("응");
+    await (await service.prepare(body, fullCtx)).postTurn("응");
 
     const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
     expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
   });
 
-  it("asks for a closing tag on persona turns only", async () => {
-    const { service } = makeService();
-    expect((await service.prepare(body, fullCtx)).expectsBondSignal).toBe(true);
-    expect((await service.prepare(body, {})).expectsBondSignal).toBe(false);
-    // No identity means no relationship to grade, so nothing to strip either.
-    expect((await service.prepare(body, { characterId: "luna" })).expectsBondSignal).toBe(false);
+  it("judges only tracked successful postTurn exchanges using actual conversation", async () => {
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: true, grade: 1 });
+    const { service } = makeService(undefined, undefined, { judge });
+    const prepared = await service.prepare(body, fullCtx);
+    expect(judge).not.toHaveBeenCalled();
+    await prepared.postTurn("reply");
+    expect(judge).toHaveBeenCalledOnce();
+    expect(judge.mock.calls[0]?.[0]).toMatchObject({
+      recentTurns: [...body.messages, { role: "assistant", content: "reply" }],
+    });
+    expect(judge.mock.calls[0]?.[0].persona).toContain("Luna");
+    expect(judge.mock.calls[0]?.[0].relationship).toContain("Where you stand");
+    for (const ctx of [{}, { characterId: "luna" }, { ...fullCtx, turnId: undefined }]) {
+      await (await service.prepare(body, ctx)).postTurn("untracked");
+    }
+    await (await service.prepare({ ...body, tools: [] }, fullCtx)).postTurn("client tools");
+    expect(judge).toHaveBeenCalledOnce();
+  });
+
+  it("does not claim the operation on failure; a same-turn success applies once", async () => {
+    const judge = vi.fn<BondJudge["judge"]>()
+      .mockResolvedValueOnce({ ok: false, reason: "timeout" })
+      .mockResolvedValue({ ok: true, grade: 2 });
+    const { service, memory, queue } = makeService(undefined, undefined, { judge });
+    const grant = vi.spyOn(memory, "grantBond");
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    expect(grant).not.toHaveBeenCalled();
+    expect(queue.enqueued).toHaveLength(1);
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    expect((await memory.getRelationshipState(fullCtx)).bondXp).toBe(16);
+    expect(grant).toHaveBeenCalledWith(
+      { userId: "u1", characterId: "luna" }, expect.objectContaining({ grade: 2 }), "s1:turn-1",
+    );
+  });
+
+  it("consumes the operation for valid zero, not for missing configuration", async () => {
+    const judge = vi.fn<BondJudge["judge"]>()
+      .mockResolvedValueOnce({ ok: false, reason: "configuration" })
+      .mockResolvedValueOnce({ ok: true, grade: 0 })
+      .mockResolvedValue({ ok: true, grade: 2 });
+    const { service, memory } = makeService(undefined, undefined, { judge });
+    const grant = vi.spyOn(memory, "grantBond");
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    expect(grant).not.toHaveBeenCalled();
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    await (await service.prepare(body, fullCtx)).postTurn("reply");
+    expect((await memory.getRelationshipState(fullCtx)).bondXp).toBe(0);
+  });
+
+  it("preserves consolidation when an injected judge throws", async () => {
+    const { service, memory, queue } = makeService(undefined, undefined, {
+      judge: async () => { throw new Error("secret conversation"); },
+    });
+    const grant = vi.spyOn(memory, "grantBond");
+    await expect((await service.prepare(body, fullCtx)).postTurn("reply")).resolves.toBeUndefined();
+    expect(grant).not.toHaveBeenCalled();
+    expect(queue.enqueued).toHaveLength(1);
   });
 
   it("still answers when the bond write fails", async () => {
@@ -781,7 +843,7 @@ describe("ChatService bond", () => {
       }
     }
     const { service, queue } = makeService(new FakeProvider(), new FailingBondStore());
-    await expect((await service.prepare(body, fullCtx)).postTurn("응", 1)).resolves.toBeUndefined();
+    await expect((await service.prepare(body, fullCtx)).postTurn("응")).resolves.toBeUndefined();
     expect(queue.enqueued).toHaveLength(1);
   });
 
@@ -797,6 +859,8 @@ describe("ChatService bond", () => {
       noopLogger,
       [],
       () => new Date(now),
+      undefined,
+      { judge: async () => ({ ok: true, grade: 2 }) },
     );
 
     // Three days of warm conversation. It takes days rather than turns because
@@ -804,7 +868,7 @@ describe("ChatService bond", () => {
     for (let day = 0; day < 3; day += 1) {
       for (let turn = 0; turn < 4; turn += 1) {
         const ctx = { ...fullCtx, turnId: `d${day}-t${turn}` };
-        await (await service.prepare(body, ctx)).postTurn("응", 2);
+        await (await service.prepare(body, ctx)).postTurn("응");
       }
       now += 24 * 60 * 60 * 1000;
     }
@@ -832,10 +896,12 @@ describe("ChatService bond", () => {
       noopLogger,
       [],
       () => new Date(now),
+      undefined,
+      { judge: async () => ({ ok: true, grade: 2 }) },
     );
 
     const first = await service.prepare(body, fullCtx);
-    await first.postTurn("응", 2);
+    await first.postTurn("응");
     now += 3 * 24 * 60 * 60 * 1000; // a different clock, a different recency
     const second = await service.prepare(body, { ...fullCtx, turnId: "turn-2" });
 

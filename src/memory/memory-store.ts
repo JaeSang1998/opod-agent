@@ -59,7 +59,7 @@ export interface SummaryWriteGuard {
 export type SummarySaveResult = "saved" | "duplicate" | "conflict";
 
 export interface GrantBondInput {
-  /** How the character graded the exchange it just had (`bond.ts`). */
+  /** The independent bond judge's selected grade (`bond.ts`). */
   grade: BondGrade;
   /** Wall-clock instant of the grant; anchors recency and the service day. */
   nowMs: number;

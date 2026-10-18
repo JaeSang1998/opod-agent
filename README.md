@@ -11,7 +11,7 @@ glossary and [`docs/adr/`](./docs/adr/) for the decisions behind the design.
 
 ```bash
 npm install
-cp .env.example .env      # fill in LLM_API_KEY (OpenAI) or point at Ollama
+cp .env.example .env      # configure DATABASE_URL, OPOD_WORKER_TOKEN and the JEV key
 npm run dev               # http://localhost:8787
 ```
 
@@ -27,23 +27,42 @@ Keep port 8788 private to the application network in shared environments. Set
 so sibling containers can reach it. The image pins the model revision and serves
 `Qwen/Qwen3-Embedding-0.6B` with 1024 dimensions.
 
-Point at **OpenAI**:
+Product chat and embeddings resolve their endpoint, model and credentials from PostgreSQL
+`admin_settings` through `DbSettingsProvider`. Configure those settings before sending chat.
+`LLM_*` and `EMBEDDING_*` examples in `.env.example` are evaluation-harness compatibility settings,
+not overrides for product generation.
 
-```
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=sk-...
-EMBEDDING_MODEL=text-embedding-3-small
+### Independent Bond judgement
+
+After a successful tracked conversation turn, `OpenRouterBondJudge` calls the Decisions API
+separately from the reply model. Configure the **agent service**, not the frontend or chat-model URL:
+
+```env
+OPENROUTER_API_KEY=replace-with-server-only-key
+# Alternatively: OPENROUTER_API_KEY_FILE=/run/secrets/openrouter-api-key
+OPENROUTER_BASE_URL=https://openrouter.ai
+BOND_JUDGE_MODEL=typesafe/jev-1.13
+BOND_JUDGE_TIMEOUT_MS=8000
 ```
 
-Point at **Ollama** (local) — same adapter, just a different base URL:
+The secret file takes precedence; an empty or unreadable file does not fall back to an environment
+key. The base URL must be an HTTP(S) origin, without `/api/v1`; the adapter calls
+`/api/alpha/decisions`. Generation and judging have independent credentials and models.
 
-```
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=llama3.1
-LLM_API_KEY=ollama
-EMBEDDING_MODEL=nomic-embed-text
-```
+JEV selects one of the existing five grades (`-2`, `-1`, `0`, `1`, `2`) from bounded persona,
+relationship references and the actual recent exchange. Its rubric treats those references as
+untrusted data. The reply model no longer emits a hidden grading tag.
+
+XP arithmetic, KST daily positive cap, earned-level floor and turn idempotency are unchanged.
+Negative grades can reduce XP only to the already-earned level's floor; they do not demote levels.
+A valid zero grade updates recency and consumes the turn operation once. Missing credentials,
+timeouts and invalid decisions leave the reply intact and skip the Bond write entirely, without
+consuming that operation. A later successful retry of the same logical turn can still award XP;
+there is no automatic judge retry.
+
+Both JSON and streaming replies use the same post-turn path. Judging adds an independent provider
+request and its latency/cost; `/healthz` alone does not verify JEV readiness. Isolated fixtures can
+inject `ContainerOverrides.bondJudge` without a paid provider call.
 
 ## API
 
@@ -113,7 +132,7 @@ opod-worker ──HTTP──▶ opod-agent /v1/chat/completions
                           │  4. assemble the cached system prompt (character only)
                           │     + a per-turn context block at the tail (ADR 0007)
                           │  5. call LLMProvider (OpenAI / Ollama)
-                          │  6. strip the closing Bond tag → move the Bond
+                          │  6. independent JEV decision → apply Bond grade once
                           │  7. autonomously judge → enqueue memory-update job
                           ▼
                        reply (JSON or SSE)

@@ -51,6 +51,12 @@ UTF-8 문자 중간 경계는 실패한다. 계획에 없는 블록·examples·c
 뿐 대화 품질 실행으로 세지 않는다. H30 인증에는 실제 candidate, simulator, judge endpoint를 호출한
 `eval:long`/`eval:confidence` artifact가 필요하다. 아래 국소 비교는 별도 사용자 검수용 진단이다.
 
+In-process target의 Bond 판정은 기본적으로 명시적 unavailable judge를 사용한다. 따라서
+`OPENROUTER_API_KEY`가 있어도 이 경로에서 유료 JEV 호출을 하지 않으며, 판정 실패를 중립 XP
+처리로 바꾸지 않는다. Bond 동작이 필요한 격리 실험은 `InProcessTargetOptions.bondJudge`로
+typed fixture를 주입한다. 이는 대화 품질을 평가하는 `EVAL_JUDGE_*`와 별개다.
+원격 `EVAL_TARGET_URL`은 배포된 서버의 Bond 설정을 따르므로 실제 JEV 비용이 발생할 수 있다.
+
 ## P1-0 공용 메모리 구조 probe
 
 `eval:memory-structure`는 대화 자연스러움을 채점하는 명령이 아니다. 특정 캐릭터의 Persona나 말투와

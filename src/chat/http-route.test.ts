@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type OpenAI from "openai";
 import { buildContainer } from "../bootstrap/container.js";
 import { loadEnv } from "../bootstrap/env.js";
@@ -11,6 +11,7 @@ import { FakeProvider } from "../testing/fake-provider.js";
 import { ScriptedProvider, textTurn, toolCallTurn } from "../testing/scripted-provider.js";
 import type { AgentTool } from "../tools/index.js";
 import { BOND_XP_BY_GRADE } from "../memory/bond.js";
+import type { BondJudge } from "./bond-judge.js";
 const now = () => "2026-01-01T00:00:00Z";
 
 /** Assemble the real Hono app over stub stores + an injectable provider. */
@@ -18,6 +19,7 @@ function buildApp(
   provider: LLMProvider = new FakeProvider(),
   tools?: AgentTool[],
   env: NodeJS.ProcessEnv = {},
+  bondJudge?: BondJudge,
 ) {
   const memory = new StubMemoryStore(now);
   const queue = new StubJobQueue();
@@ -30,6 +32,7 @@ function buildApp(
     queue,
     tools,
     log: noopLogger,
+    bondJudge,
   });
   return { app: createApp(container), memory, queue, provider };
 }
@@ -431,105 +434,83 @@ describe("POST /v1/chat/completions tool-loop debug channel (x-opod-debug)", () 
   });
 });
 
-describe("closeness tag redaction", () => {
-  const message = { role: "user", content: "hello" };
+describe("independent bond judgement through HTTP", () => {
+  const message = { role: "user", content: "나는 오늘 좋아하는 사람이 생겼어" };
 
-  it("keeps the tag off a streaming client and grades the turn from it", async () => {
-    const provider = new ScriptedProvider([textTurn("별 보러 갈래? [[bond:+2]]")]);
-    const { app, memory } = buildApp(provider);
-
+  it.each([false, true])("preserves reply and learning, awards the selected grade; stream=%s", async stream => {
+    const reply = "응 나도";
+    const provider = new ScriptedProvider([textTurn(reply)]);
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: true, grade: 2 });
+    const { app, memory, queue } = buildApp(provider, [], {}, { judge });
     const res = await app.request("/v1/chat/completions", {
-      method: "POST",
-      headers: IDENTITY,
-      body: JSON.stringify({ stream: true, messages: [message] }),
+      method: "POST", headers: IDENTITY,
+      body: JSON.stringify({ stream, messages: [message] }),
     });
-
-    const text = await res.text();
-    expect(text).not.toContain("bond");
-    expect(reassembleSSE(text)).toBe("별 보러 갈래?");
-    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
-    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[2]);
+    expect(res.status).toBe(200);
+    const text = stream ? reassembleSSE(await res.text()) : (await res.json() as OpenAI.Chat.Completions.ChatCompletion).choices[0]!.message.content;
+    expect(text).toBe(reply);
+    expect(judge).toHaveBeenCalledOnce();
+    expect(judge.mock.calls[0]?.[0].recentTurns).toEqual([message, { role: "assistant", content: reply }]);
+    expect((await memory.getRelationshipState({ userId: "u1", characterId: "luna" })).bondXp).toBe(BOND_XP_BY_GRADE[2]);
+    expect(queue.enqueued[0]?.turns.at(-1)).toEqual({ role: "assistant", content: reply });
   });
 
-  it("keeps it out of a non-streaming reply, body and learning alike", async () => {
-    const provider = new ScriptedProvider([textTurn("응 나도 [[bond:+1]]")]);
-    const { app, memory, queue } = buildApp(provider);
-
+  it.each([false, true])("keeps the successful reply on judgement failure; stream=%s", async stream => {
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: false, reason: "authentication" });
+    const { app, memory } = buildApp(new ScriptedProvider([textTurn("successful reply")]), [], {}, { judge });
+    const grant = vi.spyOn(memory, "grantBond");
     const res = await app.request("/v1/chat/completions", {
-      method: "POST",
-      headers: IDENTITY,
-      body: JSON.stringify({ messages: [{ role: "user", content: "나는 오늘 좋아하는 사람이 생겼어" }] }),
+      method: "POST", headers: IDENTITY, body: JSON.stringify({ stream, messages: [message] }),
     });
-
-    const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion;
-    expect(json.choices[0]?.message.content).toBe("응 나도");
-    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
-    expect(state.bondXp).toBe(BOND_XP_BY_GRADE[1]);
-    // What the character learns from must be the message, not the plumbing.
-    const learned = queue.enqueued[0]?.turns.find((t) => t.role === "assistant");
-    expect(String(learned?.content)).toBe("응 나도");
+    expect(res.status).toBe(200);
+    expect(stream ? reassembleSSE(await res.text()) : (await res.json() as OpenAI.Chat.Completions.ChatCompletion).choices[0]!.message.content).toBe("successful reply");
+    expect(judge).toHaveBeenCalledOnce();
+    expect(grant).not.toHaveBeenCalled();
   });
 
-  it("moves the bond even when the model forgets the tag", async () => {
-    const provider = new ScriptedProvider([textTurn("응")]);
-    const { app, memory } = buildApp(provider);
-
-    await app.request("/v1/chat/completions", {
-      method: "POST",
-      headers: IDENTITY,
-      body: JSON.stringify({ messages: [message] }),
-    });
-
-    const state = await memory.getRelationshipState({ userId: "u1", characterId: "luna" });
-    expect(state.bondXp).toBe(0);
-    expect(state.updatedAt).toBeTruthy();
-  });
-
-  it("leaves proxy traffic byte-for-byte alone", async () => {
-    // No character header: this is somebody else's passthrough request, and
-    // rewriting brackets out of it would be a bug, not a redaction.
-    const provider = new ScriptedProvider([textTurn("결과: [[bond:+2]]")]);
-    const { app } = buildApp(provider);
-
-    const res = await app.request("/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages: [message] }),
-    });
-
-    const json = (await res.json()) as OpenAI.Chat.Completions.ChatCompletion;
-    expect(json.choices[0]?.message.content).toBe("결과: [[bond:+2]]");
-  });
-});
-
-describe("closeness tag redaction, resilience", () => {
-  it("does not swallow held text when a stream ends without a finish reason", async () => {
-    class NoFinishProvider extends FakeProvider {
-      override async chatStream(): Promise<
-        AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>
-      > {
-        async function* stream() {
-          for (const content of ["오늘 ", "밤에 [["]) {
-            yield {
-              id: "no-finish",
-              object: "chat.completion.chunk",
-              created: 0,
-              model: "fake-model",
-              choices: [{ index: 0, delta: { content }, finish_reason: null }],
-            } as OpenAI.Chat.Completions.ChatCompletionChunk;
-          }
+  it.each([false, true])("never judges a generation failure; stream=%s", async stream => {
+    class FailingProvider extends FakeProvider {
+      override async chat(): Promise<OpenAI.Chat.Completions.ChatCompletion> { throw new Error("generation failed"); }
+      override async chatStream(): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
+        async function* chunks() {
+          yield { id: "partial", object: "chat.completion.chunk", created: 0, model: "fake",
+            choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }] } as OpenAI.Chat.Completions.ChatCompletionChunk;
+          throw new Error("generation failed");
         }
-        return stream();
+        return chunks();
       }
     }
-
-    const { app } = buildApp(new NoFinishProvider());
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: true, grade: 2 });
+    const { app, memory } = buildApp(new FailingProvider(), [], {}, { judge });
+    const grant = vi.spyOn(memory, "grantBond");
     const res = await app.request("/v1/chat/completions", {
-      method: "POST",
-      headers: IDENTITY,
-      body: JSON.stringify({ stream: true, messages: [{ role: "user", content: "hello" }] }),
+      method: "POST", headers: IDENTITY, body: JSON.stringify({ stream, messages: [message] }),
     });
+    await res.text();
+    expect(judge).not.toHaveBeenCalled();
+    expect(grant).not.toHaveBeenCalled();
+  });
 
-    expect(reassembleSSE(await res.text())).toBe("오늘 밤에 [[");
+  it.each([false, true])("leaves untracked proxy bytes untouched and never judges; stream=%s", async stream => {
+    const reply = "결과: [[bond:+2]]";
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: true, grade: 2 });
+    const { app } = buildApp(new ScriptedProvider([textTurn(reply)]), [], {}, { judge });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stream, messages: [message] }),
+    });
+    expect(stream ? reassembleSSE(await res.text()) : (await res.json() as OpenAI.Chat.Completions.ChatCompletion).choices[0]!.message.content).toBe(reply);
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it("preserves successful chat without a key, but never grants neutral", async () => {
+    const { app, memory } = buildApp(new FakeProvider("reply"), []);
+    const grant = vi.spyOn(memory, "grantBond");
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST", headers: IDENTITY, body: JSON.stringify({ messages: [message] }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json() as OpenAI.Chat.Completions.ChatCompletion).choices[0]!.message.content).toBe("reply");
+    expect(grant).not.toHaveBeenCalled();
   });
 });

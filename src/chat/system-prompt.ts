@@ -1,5 +1,4 @@
 import type { Persona } from "../persona/persona.js";
-import { BOND_SIGNAL_INSTRUCTION } from "./turn-context.js";
 import { renderPersonaBlock } from "./persona-reference.js";
 
 export interface PromptInputs {
@@ -10,13 +9,6 @@ export interface PromptInputs {
    *  to what the character can really do (e.g. no web search without web_search).
    *  When absent but toolsEnabled is set, the full generic abilities text is used. */
   toolNames?: string[];
-  /**
-   * Whether this relationship's Bond is being tracked, which is what makes the
-   * closing-tag rule apply. Derived from identity rather than from a loaded
-   * snapshot on purpose: a transient store failure must not silently rewrite
-   * the prefix (and cost a cache hit) for one turn.
-   */
-  tracksBond?: boolean;
 }
 
 /**
@@ -32,7 +24,7 @@ export interface PromptInputs {
  * away for the sake of one line about the weather.
  */
 export function assembleSystemPrompt(inputs: PromptInputs): string {
-  const { persona, toolsEnabled, toolNames, tracksBond } = inputs;
+  const { persona, toolsEnabled, toolNames } = inputs;
   const sections: string[] = [];
 
   sections.push(
@@ -87,11 +79,6 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   sections.push(
     `Always stay in character as ${persona.name}. Reply with a single chat message, the way you would actually type it — natural and concise.`,
   );
-
-  // Dead last, and only when a bond is being tracked. The rubric itself never
-  // changes, so it belongs to the cached prefix; only the state it grades moves
-  // per turn.
-  if (tracksBond) sections.push(BOND_SIGNAL_INSTRUCTION);
 
   return sections.join("\n\n");
 }
