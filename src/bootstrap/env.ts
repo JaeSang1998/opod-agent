@@ -22,6 +22,13 @@ const EnvSchema = z.object({
   EMBEDDING_API_KEY: z.string().optional(),
   LLM_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
 
+  // Server-only Decisions credentials, independent of DB-backed chat settings.
+  OPENROUTER_API_KEY: z.string().default(""),
+  OPENROUTER_API_KEY_FILE: z.string().min(1).optional(),
+  OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai"),
+  BOND_JUDGE_MODEL: z.string().trim().min(1).default("typesafe/jev-1.13"),
+  BOND_JUDGE_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(8_000),
+
   // Retrieval (Generative-Agents weighted scoring; docs/adr/0005)
   MEMORY_RETRIEVE_TOP_K: z.coerce.number().int().positive().default(6),
   CHARACTER_CONTEXT_MODE: z.enum(["legacy", "integrated"]).default("legacy"),

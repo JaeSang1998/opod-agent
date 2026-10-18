@@ -7,7 +7,7 @@ import type { JobQueue } from "../memory/job-queue.js";
 import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
 import { lastUserMessage, lastUserText, withTurnContext } from "../openai/messages.js";
 import type { ArchivalMemory, MemoryKind, Summary } from "../memory/types.js";
-import { type BondGrade, type BondSnapshot, bondSnapshot } from "../memory/bond.js";
+import { type BondSnapshot, bondSnapshot } from "../memory/bond.js";
 import { validQueryEmbedding, type RetrievalWeights } from "../memory/retrieval.js";
 import { type Logger, noopLogger } from "../bootstrap/logger.js";
 import type { AgentTool } from "../tools/index.js";
@@ -22,6 +22,8 @@ import {
   routePersona,
 } from "../persona/persona-router.js";
 
+import { type BondJudge, type BondJudgeInput, prepareBondJudgeInput, unconfiguredBondJudge } from "./bond-judge.js";
+import { renderPersonaBlock } from "./persona-reference.js";
 export interface ChatContext {
   characterId?: string;
   historyOffset?: number;
@@ -108,21 +110,10 @@ export interface PromptDebugMetadata {
 export interface PreparedTurn {
   /** The provider request with the persona/memory system prompt prepended. */
   request: Omit<OpenAI.Chat.Completions.ChatCompletionCreateParams, "stream">;
-  /**
-   * Run after the reply is known: move the Bond by the grade the character
-   * reported and enqueue the per-turn consolidation job. `assistantContent`
-   * must already have the closeness tag stripped out of it.
-   */
-  postTurn(assistantContent: string, grade?: BondGrade | null): Promise<void>;
+  /** Judge the successful reply and independently enqueue consolidation. */
+  postTurn(assistantContent: string): Promise<void>;
   /** Present only when the server-side tool loop should run for this turn. */
   tools?: AgentTool[];
-  /**
-   * True when the prompt asked for a closing closeness tag, and therefore when
-   * the transport must redact one out of the reply. False for proxy turns,
-   * whose bytes are passed through untouched (docs/adr/0003) — stripping a
-   * bracket sequence out of somebody else's passthrough traffic would be a bug.
-   */
-  expectsBondSignal: boolean;
   /** Present only for a served Persona; contains no prompt or memory text. */
   promptDebug?: PromptDebugMetadata;
 }
@@ -144,6 +135,7 @@ export class ChatService {
     private readonly tools: AgentTool[] = [],
     private readonly clock: () => Date = () => new Date(),
     private readonly personaBlockSelector?: PersonaBlockSelector,
+    private readonly bondJudge: BondJudge = unconfiguredBondJudge,
   ) {}
 
   async prepare(
@@ -161,7 +153,6 @@ export class ChatService {
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
         postTurn: async () => {},
-        expectsBondSignal: false,
       };
     }
 
@@ -177,7 +168,6 @@ export class ChatService {
       return {
         request: { ...body, model, stream: undefined } as PreparedTurn["request"],
         postTurn: async () => {},
-        expectsBondSignal: false,
       };
     }
 
@@ -244,9 +234,6 @@ export class ChatService {
     // Client-supplied tools mean pure passthrough (docs/adr/0003): the server tool
     // loop only runs for persona turns whose body carries no tools of its own.
     const serverToolsActive = this.tools.length > 0;
-    // Identity, not a loaded snapshot: a store hiccup must not flip the system
-    // prompt for one turn and cost the prefix cache with it.
-    const tracksBond = Boolean(ctx.userId && ctx.characterId);
 
     // Two halves, split by how often they change (docs/adr/0007). The system
     // prompt is the character and holds still, so every Provider between here
@@ -257,7 +244,6 @@ export class ChatService {
       persona: routedPersona.stablePersona,
       toolsEnabled: serverToolsActive,
       toolNames: serverToolsActive ? this.tools.map((t) => t.definition.function.name) : undefined,
-      tracksBond,
     });
     const now = this.clock();
     // Omit only a summary fully covered by the raw prefix supplied in this request.
@@ -355,17 +341,23 @@ export class ChatService {
         messages: augmented as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
         stream: undefined,
       } as PreparedTurn["request"],
-      postTurn: async (assistantContent, grade) => {
-        // Independent of each other: the Bond must move on every exchange,
-        // while Consolidation skips the ones with nothing to learn from.
+      postTurn: async (assistantContent) => {
+        // Judgement failure cannot claim a neutral grant or suppress learning.
         await Promise.all([
-          this.grantBond(ctx, grade ?? null),
+          this.judgeBond(ctx, () => prepareBondJudgeInput(
+            [routedPersona.stablePersona.name, routedPersona.stablePersona.bio,
+              ...routedPersona.stablePersona.blocks.map(block => renderPersonaBlock(block, 1)),
+              ...routedPersona.stablePersona.canonMemories.map(memory => typeof memory === "string" ? memory : memory.content)].join("\n\n"),
+            assembleTurnContext({ ...turnInputs, memories,
+              personaStartBlocks: routedPersona.startOnlyBlocks,
+              personaRetrievedBlocks: routedPersona.retrievedBlocks,
+              characterMemories: routedPersona.retrievedCanonMemories }),
+            messages, assistantContent,
+          )),
           this.enqueueConsolidation(ctx, messages, assistantContent, summary),
         ]);
       },
       tools: serverToolsActive ? this.tools : undefined,
-      // Exactly when the prompt carries the rule that asks for the tag.
-      expectsBondSignal: tracksBond,
       promptDebug: {
         schemaVersion: 1,
         stablePromptSha256: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
@@ -559,32 +551,24 @@ export class ChatService {
     }
   }
 
-  /**
-   * Move the Bond by the grade the character reported for this exchange.
-   *
-   * A missing grade counts as 0, never as a skip: the write is also what marks
-   * the relationship as touched just now, and a model that forgot its tag must
-   * not leave the character acting distant with someone it was mid-conversation
-   * with. `turnId` gates it because the operation key is what makes a retried
-   * turn idempotent — without one, a client retry would grade the same exchange
-   * twice.
-   */
-  private async grantBond(ctx: ChatContext, grade: BondGrade | null): Promise<void> {
+  /** Only successful judgements consume the existing exactly-once operation key. */
+  private async judgeBond(ctx: ChatContext, input: () => BondJudgeInput | null): Promise<void> {
     if (!ctx.userId || !ctx.characterId || !ctx.turnId) return;
-    if (grade === null) {
-      this.log.debug("no closeness grade in reply; treating as neutral", {
-        requestId: ctx.requestId,
-      });
-    }
     try {
+      const prepared = input();
+      const result = prepared ? await this.bondJudge.judge(prepared) : { ok: false as const, reason: "context-too-large" };
+      if (!result.ok) {
+        this.log.warn("bond judgement skipped", { reason: result.reason, requestId: ctx.requestId });
+        return;
+      }
       await this.memory.grantBond(
         { userId: ctx.userId, characterId: ctx.characterId },
-        { grade: grade ?? 0, nowMs: this.clock().getTime() },
+        { grade: result.grade, nowMs: this.clock().getTime() },
         `${ctx.sessionId ?? ""}:${ctx.turnId}`,
       );
-    } catch (err) {
-      // A relationship that failed to move is not a failed reply.
-      this.log.warn("bond grant failed", { err: String(err), requestId: ctx.requestId });
+    } catch {
+      // Do not leak provider exceptions, credentials or conversation text.
+      this.log.warn("bond judgement or grant failed", { requestId: ctx.requestId });
     }
   }
 

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FakeProvider } from "../src/testing/fake-provider.js";
 import { StubPersonaStore } from "../src/persona/stub-persona-store.js";
 import { createConversationTarget, parseChatResponse, type TargetTurnInput } from "./target.js";
+import type { BondJudge } from "../src/chat/bond-judge.js";
 
 const persona = {
   characterId: "fixed-character", name: "Fixed", bio: "A synthetic character.",
@@ -19,6 +20,17 @@ const input: TargetTurnInput = {
 const env = { EVAL_TARGET_PROVIDER: "deterministic", EVAL_CONSOLIDATION_MODE: "none" };
 
 describe("isolated in-process evaluation inputs", () => {
+  it("injects typed judge fixtures independently from generation fixtures", async () => {
+    const judge = vi.fn<BondJudge["judge"]>().mockResolvedValue({ ok: true, grade: 1 });
+    const target = createConversationTarget(env, {
+      provider: new FakeProvider("actual reply"), personas: new StubPersonaStore([persona]), bondJudge: { judge },
+    });
+    try {
+      expect((await target.reply(input)).text).toBe("actual reply");
+      expect(judge).toHaveBeenCalledOnce();
+      expect(judge.mock.calls[0]?.[0].recentTurns).toEqual([...input.messages, { role: "assistant", content: "actual reply" }]);
+    } finally { await target.close(); }
+  });
   it("seeds and replies in integrated lexical mode without embedding calls and preserves budget/retrieval traces through HTTP", async () => {
     const provider = new FakeProvider();
     const target = createConversationTarget({ ...env, CHARACTER_CONTEXT_MODE: "integrated", CONTEXT_MAX_BYTES: "16000" }, {

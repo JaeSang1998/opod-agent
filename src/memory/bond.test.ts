@@ -87,7 +87,7 @@ describe("nextBondState", () => {
 
   const grade = (g: BondGrade, state = base) => nextBondState(state, { grade: g, nowMs: now });
 
-  it("moves the bond by the grade the character reported", () => {
+  it("moves the bond by the judge's selected grade", () => {
     expect(grade(2).bondXp).toBe(BOND_XP_BY_GRADE[2]);
     expect(grade(1).bondXp).toBe(BOND_XP_BY_GRADE[1]);
     expect(grade(0).bondXp).toBe(0);
