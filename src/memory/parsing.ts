@@ -100,7 +100,7 @@ export function parseObservations(
  */
 export function parseReflections(text: string, evidence: ArchivalMemory[]): ParsedReflection[] {
   return parseLines(text).map((line) => {
-    const match = line.match(/^(.+?)\s+\(because of (\d+(?:\s*,\s*\d+)*)\)$/);
+    const match = line.match(/^(.+?)\s+\(because of (\d+(?:\s*,\s*\d+)*)\)\.?$/);
     const content = match?.[1]?.trim();
     if (!content || !match?.[2]) throw new Error("Invalid memory reflection response");
     const ids = match[2].split(",").map((raw) => {

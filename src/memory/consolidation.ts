@@ -119,12 +119,8 @@ export class ConsolidationService {
     });
     const observationsStored = stored.length;
 
-    // 2. Accumulate importance; reflect autonomously when the threshold is crossed.
-    const reflection = await atStage("reflection", input, () =>
-      this.maybeReflect(key, input.idempotencyKey, signal),
-    );
-
-    // 3. Recursive session summary (MemGPT-style running compression).
+    // 2. Persist continuity before optional reflection, so its failure cannot
+    // block the summary. Source coverage and idempotency make retries safe.
     let summaryUpdated = false;
     if (input.refreshSummary && transcript.trim()) {
       summaryUpdated = await atStage("summary", input, () =>
@@ -137,6 +133,11 @@ export class ConsolidationService {
         ),
       );
     }
+
+    // 3. Reflect autonomously when accumulated importance crosses the threshold.
+    const reflection = await atStage("reflection", input, () =>
+      this.maybeReflect(key, input.idempotencyKey, signal),
+    );
 
     return {
       observationsStored,

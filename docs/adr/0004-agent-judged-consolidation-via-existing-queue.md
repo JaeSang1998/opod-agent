@@ -27,6 +27,13 @@ Summary persistence combines its key with revision compare-and-swap. A retry can
 after a partial failure without duplicating importance, observations, reflections, or Core rewrites,
 and concurrent jobs cannot silently overwrite a Summary.
 
+Consolidation persists observations, then the requested Summary, then runs reflection. A reflection
+failure still fails the job and restores its reflection budget, but cannot block the Summary already
+saved. Retrying reuses the observation operation key and Summary coverage/revision guards. Reflection
+citations accept an optional sentence-ending period after the closing parenthesis; missing or
+out-of-range citations and invalid completions (including null content) remain errors. Regression
+coverage lives in `src/memory/reflection.test.ts` and `src/memory/consolidation.test.ts`.
+
 ## Considered options
 
 - **Worker-scheduled cadence (every turn / every N turns)** — simple, but the Agent can't decide based on

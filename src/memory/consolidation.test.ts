@@ -453,6 +453,44 @@ describe("ConsolidationService", () => {
     ).toBe(3);
   });
 
+  it.each([null, "Unsupported reflection (because of 99)."])("keeps the summary when reflection returns %s and resumes without duplicate writes", async (failure) => {
+    class FailingReflectionProvider extends FakeProvider {
+      fail = true;
+      override async chat(...args: Parameters<FakeProvider["chat"]>) {
+        const response = await super.chat(...args);
+        if (this.fail && String(args[0].messages[0]?.content).includes("high-level Reflections")) {
+          response.choices[0]!.message.content = failure;
+        }
+        return response;
+      }
+    }
+    const provider = new FailingReflectionProvider("reply", '[{"content":"User has a cat named Nova.","importance":6}]');
+    const memory = new StubMemoryStore(now);
+    const key = { userId: "u-summary-before-reflection", characterId: "luna", sessionId: "s1" };
+    const service = new ConsolidationService(provider, memory, reflectorFor(provider, memory), { reflectionThreshold: 5 }, now);
+    const input = {
+      ...key, correlationId: "summary-before-reflection", idempotencyKey: "summary-before-reflection",
+      reason: "manual" as const, refreshSummary: true, turnsStartOffset: 0,
+      turns: [{ role: "user" as const, content: "I have a cat named Nova." }],
+    };
+
+    await expect(service.consolidate(input)).rejects.toMatchObject({ stage: "reflection" });
+    const summary = await memory.getSummary(key);
+    expect(summary).toMatchObject({ content: "They introduced their cat Nova.", turnsCovered: 1, revision: 1 });
+    const observations = await memory.recentObservations(key, 10);
+    expect(observations).toHaveLength(1);
+    expect((await memory.getRelationshipState(key)).importanceSinceReflection).toBe(6);
+
+    provider.fail = false;
+    await expect(service.consolidate(input)).resolves.toMatchObject({ summaryUpdated: false, reflected: true, reflectionsStored: 1 });
+    expect(await memory.getSummary(key)).toEqual(summary);
+    expect(await memory.recentObservations(key, 10)).toEqual(observations);
+    expect((await memory.getRelationshipState(key)).importanceSinceReflection).toBe(1);
+    await expect(service.consolidate(input)).resolves.toMatchObject({ summaryUpdated: false, reflected: false });
+    expect(await memory.getSummary(key)).toEqual(summary);
+    expect((await memory.getRelationshipState(key)).importanceSinceReflection).toBe(1);
+  });
+
   it("resumes after importance persistence fails without losing the stored Observation", async () => {
     class FlakyImportanceStore extends StubMemoryStore {
       private fail = true;
