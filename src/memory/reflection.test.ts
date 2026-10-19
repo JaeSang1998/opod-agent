@@ -34,15 +34,24 @@ describe("parseReflections", () => {
     ]);
   });
 
+  it("accepts a sentence-ending period after citations without including it in the memory", () => {
+    expect(parseReflections("The user values companionship (because of 1, 3).", evidence)).toEqual([
+      { content: "The user values companionship", evidence: ["m1", "m3"] },
+    ]);
+  });
+
   it.each([
     "A standalone Reflection",
     "Private claim (because of 9)",
+    "Private claim (because of 9).",
     "Private claim (because of 0)",
     "Private claim (because of 1, 9)",
     "Private claim (because of -1)",
     "Private claim (because of 1.5)",
     "Private claim (age 1)",
     "(because of 1)",
+    "(because of 1).",
+    "Private claim (because of 1). Extra commentary",
     "Valid claim (because of 1)\nPrivate claim without evidence",
   ])("rejects a whole synthesis batch with unsupported citations: %s", (response) => {
     expect(() => parseReflections(response, evidence)).toThrow(/^Invalid memory reflection response$/);
