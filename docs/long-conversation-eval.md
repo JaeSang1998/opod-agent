@@ -125,8 +125,11 @@ scripted anchors + LLM user simulator
 
 기본 in-process target은 `buildContainer`/`createApp`으로 production 경로를 조립한다. DB 없는 실행에서
 `UnavailableLlmLogStore`가 모델 호출을 막지 않도록 raw `OpenAICompatProvider`를 명시 주입하고,
-`StubJobQueue`의 새 job을 같은 production `ConsolidationService`로 매 turn 처리한다. batched mode에서는
-stale Summary로 생긴 겹치는 prefix job을 최신 summary job 하나로 합쳐 `turnsCovered` 과계를 막는다.
+`StubJobQueue`의 새 job을 같은 production `ConsolidationService`로 처리한다. quiescent mode는 매 turn,
+batched mode는 지정한 turn 간격과 종료 시점에 모든 대기 job을 실행하며 겹치는 job을 생략하지 않는다.
+Summary 소유자가 `turnsStartOffset`과 기존 `turnsCovered`로 미처리 source 범위만 요약하고 CAS를 적용한다.
+실행 metadata의 `consolidationQueuePolicy=all_jobs_with_source_ranges_v1`은 이 계약을 식별하며,
+과거 job 생략 방식의 batched 결과와 같은 실행 조건으로 합산하지 않는다.
 
 `EVAL_TARGET_URL`을 지정하면 배포된 Agent를 HTTP로 평가한다. 이때 Memory 반영은 실제 Postgres worker
 속도에 좌우되므로 고정 sleep보다 job quiescence 관찰이 바람직하다. 현재 runner는 배포 상태 endpoint가

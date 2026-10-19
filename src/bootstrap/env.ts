@@ -49,7 +49,7 @@ const EnvSchema = z.object({
   WEB_SEARCH_API_KEY: z.string().optional(),
   WEB_SEARCH_BASE_URL: z.string().url().default("https://api.tavily.com"),
 
-  // In-process consolidation worker (docs/persona-memory-plan.md Phase 4).
+  // In-process consolidation worker.
   // Runs only with built-in Postgres persistence, where the durable queue lives.
   MEMORY_WORKER_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   MEMORY_WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),

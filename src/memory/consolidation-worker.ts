@@ -26,8 +26,8 @@ interface ClaimedJob {
 /**
  * In-process consumer of the durable opod.chat_memory_consolidation_jobs queue. ADR-0004
  * planned an external opod-worker calling /memory/consolidate; until that
- * service exists the Agent hosts the loop itself (docs/persona-memory-plan.md
- * Phase 4 — the same in-process-worker rule the admin pipeline follows).
+ * service exists the Agent hosts the loop itself — the same in-process-worker
+ * rule the admin pipeline follows.
  *
  * Claims use FOR UPDATE SKIP LOCKED with a lease, so several Agent instances
  * can run the loop concurrently and a crashed run is reclaimed after its lease

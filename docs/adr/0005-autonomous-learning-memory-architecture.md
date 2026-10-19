@@ -1,4 +1,4 @@
-# Autonomous-learning memory: importance-weighted retrieval, reflection, and a self-edited core block
+# Autonomous-learning memory: importance-weighted retrieval and reflection
 
 ## Status
 
@@ -25,20 +25,25 @@ lines of work:
 
 ## Decision
 
-Memory has four tiers: **Short-term** (caller-passed turns), **Archival**
-(observations + reflections in pgvector, importance-weighted), **Core** (a compact,
-self-rewritten relationship digest, always injected), and **Summary** (session-scoped within the
-user/Character relationship, so a reused session id cannot cross relationship data).
+Memory has three tiers: **Short-term** (caller-passed turns), **Archival**
+(relationship-scoped observations and cited reflections, importance-weighted), and **Summary**
+(session-scoped within the user/Character relationship, so a reused session id cannot cross
+relationship data). Archival records carry explicit `always` or `retrieved` injection policy;
+stable grounded memories may be included independently of the current query. The serving path does
+not load a separate Core block. Legacy Core accessors are compatibility facades over memory records,
+not a separate persistence tier.
 
 - **Retrieval** uses the Generative-Agents weighted score (recency·importance·relevance,
   normalized), implemented as a pure function so a pgvector adapter can mirror it.
-- **Consolidation** (already async via opod-worker — ADR-0004 — which *is* the
-  sleep-time substrate) extracts observations from every turn after the current Summary
+- **Consolidation** runs off the chat hot path through the Postgres job queue. When Postgres is
+  configured and `MEMORY_WORKER_ENABLED` is enabled, the Agent hosts the consumer in-process.
+  It extracts observations from every turn after the current Summary
   watermark, scores importance, and accumulates it in per-relationship state.
 - **Reflection is the autonomous trigger**: when accumulated importance crosses
-  `REFLECTION_IMPORTANCE_THRESHOLD`, the Agent runs a reflection pass (salient
-  questions → weighted retrieval → cited Reflections appended to Archival Memory) and
-  **self-rewrites the Core block** (MemGPT-style), then resets the accumulator.
+  `REFLECTION_IMPORTANCE_THRESHOLD`, the Agent consumes the reflection budget and runs a pass
+  (salient questions → weighted retrieval → cited Reflections appended to Archival Memory).
+  The current `Reflector` does not rewrite Core in either mode and returns `coreUpdated: false`.
+  A failed reflection restores the consumed budget for the existing retry path.
 
 The hot-path Consolidation Policy enqueues memorable content immediately. Transient
 short exchanges wait until the uncovered-turn threshold makes the Summary stale; that
@@ -50,10 +55,11 @@ whether to reflect remains importance- and salience-driven.
 
 - Honors the "the agent decides autonomously" intent with a mechanism grounded in
   published work, not an ad-hoc rule.
-- The Core block gives cross-session "it remembers me" continuity at a small, fixed
-  token cost; Reflections let the Character form higher-level views, not just store Observations.
-- Consolidation now makes several LLM calls per reflection (extract, importance,
-  questions, Reflections, Core Memory rewrite, Summary). This is deliberately off the hot path;
+- Query-independent `always` memories and retrieved records provide relationship continuity;
+  cited Reflections retain higher-level interpretations alongside Observations. The policy is an
+  input contract, not evidence that recall or dialogue quality has improved.
+- Consolidation and reflection make model calls for extraction, salient questions, cited
+  Reflections and Summary updates. They do not add a Core rewrite call. This is off the hot path;
   a fast local MoE (e.g. `qwen3:30b-a3b`) or a cheap model suits it. Importance-gating
   keeps reflection infrequent.
 - Similarity-dedup on write depends on embedding quality; a weak embedding model can

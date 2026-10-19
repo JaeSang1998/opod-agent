@@ -91,9 +91,7 @@ The 45-block/79-canon snapshot produced 15 split sources/40 fragments and 48 syn
 No actual model replies, user-quality verdicts, or shared-persona writes from learned user memory.
 Core/summary persistence, current-scene generation, correction/forgetting and semantic indexing remain
 out of scope. Source-backed behavioral quotations inside blocks remain; excluding standalone examples
-is an experiment, not a blanket product prohibition on examples. See the existing
-[research D28](../character-chat-products-persona-memory-research-2026-09-03.md#1123-d28--공식-레퍼런스-재확인과-실제-personamemory-읽기-구조-변경)
-and [verification report](../reports/character-chat-direct-naturalness-2026-09-08.md#d28--레퍼런스-기반-실제-personamemory-분리).
+is an experiment, not a blanket product prohibition on examples.
 
 ## D29 extension — persisted authored context (2026-09-08)
 
@@ -127,8 +125,6 @@ DB; human review required before merge. No development DB changes or deployment.
   a DB restart. This is persistence evidence, not actual conversation-quality evidence. A visual
   structure editor, semantic recall, correction/forgetting and current-scene state are not included.
 
-See [D29 evidence and rollout limits](../reports/character-context-local-db-2026-09-08.md).
-
 ## D30 extension — preserve authored purpose at the prompt boundary (2026-09-08)
 
 Repo-evidenced; verified, human review required before merge. The router still owns selection.
@@ -143,7 +139,6 @@ The isolated local DB now holds D30 candidate edits to eight sources (five text 
 content-preserving preference reclassifications/splits), totaling 72 fragments. Frozen D29 originals,
 canon and existing human reviews remain unchanged. No character-specific runtime branches, new
 canon, retrieval algorithm changes or schema changes were added. Actual replies remain unverified.
-See [D30 implementation, four-condition input evidence and rollback boundary](../reports/character-personality-local-2026-09-08.md).
 
 ## D31 extension — bounded recall and edited local context (2026-09-09)
 
@@ -178,8 +173,7 @@ branches or universal rules requiring all future canon to be conditional.
 128 four-condition captures plus 36 final checks validate input inclusion, not naturalness. Content-only
 and selector-only conditions each leave a different coffee-context defect; combined inputs retain the
 preference on a deictic follow-up and omit additional coffee recall after a cut in all four tested
-characters. Actual model replies and new human verdicts are zero. See
-[D31 scope, primary references, evidence, authorization and recovery](../reports/character-context-optimization-2026-09-09.md).
+characters. Actual model replies and new human verdicts are zero.
 
 ## Canonical-source extension — local verification (2026-09-11)
 
@@ -212,8 +206,8 @@ last-write-wins description for linked records, not the original-content preserv
 
 Evidence owners: `src/persona/postgres-persona-store.test.ts`, `src/chat/chat-service.test.ts`,
 `src/chat/turn-context.test.ts`, `src/chat/character-context.integration.test.ts`, plus backend/admin
-DB tests. The approved scope and execution ledger are in the sibling backend plan
-`.codex/pave/plans/2026-09-11-character-context-canonical-design.md`. Original local DB55433 is not
+DB tests. Current backend module boundaries are documented in the sibling
+[codebase guide](../../../opod-service-backend/docs/07-codebase-guide.md). Original local DB55433 is not
 automatically migrated by this rehearsal, and removing a manifest does not undo persisted links.
 
 ## Local semantic-query connection (2026-09-13)
@@ -229,5 +223,4 @@ Query instructions are distinct from authored documents. The currently supported
 `Qwen/Qwen3-Embedding-0.6B` query path uses the official Instruct/Query convention; ordinary
 `embed` calls preserve document text. Character context eligibility, source hashes, top-K/fusion,
 and persona routing are unchanged. This connection does not activate the consolidation worker
-or certify relevance/naturalness. See [the local Qwen report](../reports/local-qwen-embedding-2026-09-13.md)
-for verification, the pinned local server, exact scope and remaining retrieval-quality issues.
+or certify relevance/naturalness.
