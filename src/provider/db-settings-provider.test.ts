@@ -40,6 +40,32 @@ function providerWithCapturedConfig(configs: ProviderConfig[]) {
 }
 
 describe("DbSettingsProvider", () => {
+  it("uses the selected chat API/model on the next request without changing embeddings", async () => {
+    const config = { version: 1, connections: [{ id: "a", type: "llm", provider: "openai-compatible", apiUrl: "https://selected.test/v1", apiKey: "selected-key", models: [{ id: "m", model: "chat-v1" }, { id: "next", model: "chat-v2" }] }], bindings: { "chat.response": { connectionId: "a", modelId: "m" } } };
+    const configs: ProviderConfig[] = [];
+    const { pool } = fakePool(() => [...COMPLETE_SETTINGS, { key: "ai.management.v1", value: JSON.stringify(config) }]);
+    const provider = new DbSettingsProvider(pool, noopLogger, providerWithCapturedConfig(configs));
+    await provider.chat({ model: provider.defaultModel, messages: [] });
+    config.bindings["chat.response"].modelId = "next";
+    await provider.chat({ model: provider.defaultModel, messages: [] });
+    expect(configs.map(c => ({ baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model }))).toEqual([
+      { baseUrl: "https://selected.test/v1", apiKey: "selected-key", model: "chat-v1" },
+      { baseUrl: "https://selected.test/v1", apiKey: "selected-key", model: "chat-v2" },
+    ]);
+    expect(configs[1]?.embeddingApiKey).toBe("embed-key");
+    expect(configs[1]?.embeddingBaseUrl).toBe("https://embed.test/v1");
+  });
+
+  it("fails closed on broken assignments and resolves legacy keys only from DB", async () => {
+    const config = { version: 1, connections: [{ id: "a", type: "llm", provider: "openai-compatible", apiUrl: "https://selected.test/v1", legacyKey: "planner", models: [{ id: "m", model: "assigned-chat" }] }], bindings: { "chat.response": { connectionId: "a", modelId: "m" } } };
+    const configs: ProviderConfig[] = [];
+    const { pool } = fakePool(() => [...COMPLETE_SETTINGS, { key: "ai.management.v1", value: JSON.stringify(config) }]);
+    const provider = new DbSettingsProvider(pool, noopLogger, providerWithCapturedConfig(configs));
+    await provider.chat({ model: provider.defaultModel, messages: [] });
+    expect(configs[0]?.apiKey).toBe("planner-key");
+    config.bindings["chat.response"].modelId = "missing";
+    await expect(provider.chat({ model: provider.defaultModel, messages: [] })).rejects.toBeInstanceOf(LlmConfigUnavailableError);
+  });
   it("keeps query embeddings paired with their DB model and applies Qwen instructions only to queries", async () => {
     let model = "Qwen/Qwen3-Embedding-0.6B";
     const instances: FakeProvider[] = [];
