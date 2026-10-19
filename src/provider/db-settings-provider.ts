@@ -5,6 +5,7 @@ import type { LLMProvider, ProviderCallOptions } from "./llm-provider.js";
 import { OpenAICompatProvider, type ProviderConfig } from "./openai-compat-provider.js";
 
 const SETTING_KEYS = [
+  "ai.management.v1",
   "agent.llmApiUrl",
   "agent.llmApiKey",
   "agent.llmModel",
@@ -17,6 +18,28 @@ const SETTING_KEYS = [
 ] as const;
 
 const UNRESOLVED_MODEL = "db-config-required";
+
+function selectedChat(raw: string | undefined, value: (key: string) => string | undefined) {
+  if (!raw) return null;
+  try {
+    const config = JSON.parse(raw) as {
+      version: number;
+      connections: { id: string; type: string; provider: string; apiUrl: string; apiKey?: string; legacyKey?: string; models: { id: string; model: string }[] }[];
+      bindings: Record<string, { connectionId: string; modelId: string }>;
+    };
+    if (config.version !== 1 || !Array.isArray(config.connections) || !config.bindings) throw new Error();
+    const binding = config.bindings["chat.response"];
+    if (!binding) return null;
+    const connection = config.connections.find(c => c.id === binding.connectionId);
+    const model = connection?.models.find(m => m.id === binding.modelId);
+    if (connection?.type !== "llm" || connection.provider !== "openai-compatible" || !model?.model || !connection.apiUrl) throw new Error();
+    const apiKey = connection.apiKey || (connection.legacyKey === "planner" ? value("planner.llmApiKey") : connection.legacyKey === "chat" ? value("agent.llmApiKey") ?? value("planner.llmApiKey") : undefined);
+    if (!apiKey) throw new Error();
+    return { apiUrl: `${connection.apiUrl.replace(/\/+$/, "").replace(/\/chat\/completions$/, "")}/chat/completions`, apiKey, model: model.model };
+  } catch {
+    throw new LlmConfigUnavailableError("Chat model assignment is invalid or incomplete");
+  }
+}
 
 export class LlmConfigUnavailableError extends Error {
   override readonly name = "LlmConfigUnavailableError";
@@ -123,9 +146,10 @@ export class DbSettingsProvider implements LLMProvider {
 
     const byKey = new Map(rows.map((row) => [row.key, row.value.trim()]));
     const value = (key: string) => byKey.get(key) || undefined;
-    const chatUrl = value("agent.llmApiUrl") ?? value("planner.llmApiUrl");
-    const chatKey = value("agent.llmApiKey") ?? value("planner.llmApiKey");
-    const chatModel = value("agent.llmModel") ?? value("planner.llmModel");
+    const selected = selectedChat(value("ai.management.v1"), value);
+    const chatUrl = selected?.apiUrl ?? value("agent.llmApiUrl") ?? value("planner.llmApiUrl");
+    const chatKey = selected?.apiKey ?? value("agent.llmApiKey") ?? value("planner.llmApiKey");
+    const chatModel = selected?.model ?? value("agent.llmModel") ?? value("planner.llmModel");
     if (!chatUrl || !chatKey || !chatModel) {
       throw new LlmConfigUnavailableError("Chat LLM DB configuration is incomplete");
     }
