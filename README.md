@@ -64,6 +64,42 @@ Both JSON and streaming replies use the same post-turn path. Judging adds an ind
 request and its latency/cost; `/healthz` alone does not verify JEV readiness. Isolated fixtures can
 inject `ContainerOverrides.bondJudge` without a paid provider call.
 
+### Public character experience
+
+Persona turns can call `express_thought` for one short **fictional character feeling** and
+`share_photo` for one contextual album selection. These are public expression tools, separate
+from native model reasoning, and remain available when external lookup tools are disabled.
+The agent strips native reasoning/provider-specific message fields from personalized completions.
+Proxy requests and client-owned OpenAI tool requests retain their existing passthrough contract.
+
+JSON completions add optional `opod` metadata; streams emit partial `event: character` frames:
+
+| Field | Public content |
+| --- | --- |
+| `thought` | Optional in-character aside, at most 120 characters; no analysis, scoring or tool-selection narration |
+| `photo` | Server-resolved `{ id, url, alt, isMock }`, never a model-generated URL |
+| `relationship` | `{ level, label, progress, change }`; progress is 0–1 within the level, change is `closer`, `steady` or `distant` |
+
+Relationship feedback uses the atomic persisted XP difference, not the JEV grade. Capped,
+floor-bound and replayed grants therefore cannot pretend to move the relationship. It arrives
+before streaming `[DONE]`; unavailable judgements omit relationship feedback rather than inventing
+a neutral result. XP and judge rationale are never public metadata.
+
+Voice guidance varies ease, candor, playfulness, warmth and initiative with within-level progress.
+The authored persona, established speech level, actual shared history and personal boundaries
+still take precedence; a level-up never automatically switches Korean 존댓말 to 반말.
+
+`OpenRouterPhotoSelector` uses the same server-only Decisions configuration above. It sees the
+bounded persona, recent dialogue and eligible scene descriptions, and can choose no photo.
+Eligibility is enforced before JEV; failures do not produce a fallback photo. The seven scenes in
+`src/chat/photo-catalog.ts` are explicitly **mock Unsplash scene photos**, not character selfies
+or evidence of real activities. Each tool allows at most one publication/selection per turn.
+
+The service backend validates and persists `opod` as nullable character-message `experience`;
+the product web preserves it through Relay history and reply polling. Apply backend migration
+`20261023041721_character_experience_schema_sync` before deploying that backend version.
+
+
 ## API
 
 ### `POST /v1/chat/completions`

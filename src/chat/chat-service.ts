@@ -7,7 +7,7 @@ import type { JobQueue } from "../memory/job-queue.js";
 import type { ChatCompletionRequest, ChatMessage } from "../protocol/index.js";
 import { lastUserMessage, lastUserText, withTurnContext } from "../openai/messages.js";
 import type { ArchivalMemory, MemoryKind, Summary } from "../memory/types.js";
-import { type BondSnapshot, bondSnapshot } from "../memory/bond.js";
+import { type BondSnapshot, bondSnapshot, publicBond } from "../memory/bond.js";
 import { validQueryEmbedding, type RetrievalWeights } from "../memory/retrieval.js";
 import { type Logger, noopLogger } from "../bootstrap/logger.js";
 import type { AgentTool } from "../tools/index.js";
@@ -24,6 +24,10 @@ import {
 
 import { type BondJudge, type BondJudgeInput, prepareBondJudgeInput, unconfiguredBondJudge } from "./bond-judge.js";
 import { renderPersonaBlock } from "./persona-reference.js";
+import type { CharacterExperience } from "../protocol/index.js";
+import { createPublicThoughtTool } from "../tools/public-thought.js";
+import { createSharePhotoTool } from "../tools/share-photo.js";
+import { type PhotoSelector, unconfiguredPhotoSelector } from "./photo-selector.js";
 export interface ChatContext {
   characterId?: string;
   historyOffset?: number;
@@ -116,6 +120,9 @@ export interface PreparedTurn {
   tools?: AgentTool[];
   /** Present only for a served Persona; contains no prompt or memory text. */
   promptDebug?: PromptDebugMetadata;
+  /** Only deliberately public character expressions; absent on proxy/tool passthrough. */
+  experience?: CharacterExperience;
+  observeExperience?(listener: (update: CharacterExperience) => void): void;
 }
 
 /**
@@ -136,6 +143,7 @@ export class ChatService {
     private readonly clock: () => Date = () => new Date(),
     private readonly personaBlockSelector?: PersonaBlockSelector,
     private readonly bondJudge: BondJudge = unconfiguredBondJudge,
+    private readonly photoSelector: PhotoSelector = unconfiguredPhotoSelector,
   ) {}
 
   async prepare(
@@ -231,9 +239,27 @@ export class ChatService {
         typeof memory !== "string" && memory.injection === "retrieved" ? [memory] : []), previousUser),
     });
 
-    // Client-supplied tools mean pure passthrough (docs/adr/0003): the server tool
-    // loop only runs for persona turns whose body carries no tools of its own.
-    const serverToolsActive = this.tools.length > 0;
+    const personaReference = [routedPersona.stablePersona.name, routedPersona.stablePersona.bio,
+      ...routedPersona.stablePersona.blocks.map(block => renderPersonaBlock(block, 1)),
+      ...routedPersona.stablePersona.canonMemories.map(memory => typeof memory === "string" ? memory : memory.content)].join("\n\n");
+    const experience: CharacterExperience = {};
+    let experienceListener: ((update: CharacterExperience) => void) | undefined;
+    const publish = (update: CharacterExperience) => {
+      Object.assign(experience, update);
+      experienceListener?.(update);
+    };
+    const serverTools = [
+      ...this.tools,
+      createPublicThoughtTool(thought => publish({ thought })),
+      createSharePhotoTool({
+        characterId: persona.characterId,
+        persona: personaReference,
+        bondLevel: bond?.level ?? null,
+        messages,
+        selector: this.photoSelector,
+        onPhoto: photo => publish({ photo }),
+      }),
+    ];
 
     // Two halves, split by how often they change (docs/adr/0007). The system
     // prompt is the character and holds still, so every Provider between here
@@ -242,8 +268,8 @@ export class ChatService {
     // unchanged history but before the person's actual text.
     const systemPrompt = assembleSystemPrompt({
       persona: routedPersona.stablePersona,
-      toolsEnabled: serverToolsActive,
-      toolNames: serverToolsActive ? this.tools.map((t) => t.definition.function.name) : undefined,
+      toolsEnabled: true,
+      toolNames: serverTools.map(t => t.definition.function.name),
     });
     const now = this.clock();
     // Omit only a summary fully covered by the raw prefix supplied in this request.
@@ -289,7 +315,7 @@ export class ChatService {
       const budget = fitContextBudget<(typeof optionalEntries)[number]["value"]>({ system: systemPrompt, messages, optionalEntries,
         maxBytes: this.config.contextMaxBytes ?? 32_000,
         requestOverheadBytes: Buffer.byteLength(JSON.stringify({ ...body, model, messages: [], stream: false,
-          ...(serverToolsActive ? { tools: this.tools.map(t => t.definition) } : {}) }), "utf8") - 2,
+          tools: serverTools.map(t => t.definition) }), "utf8") - 2,
         assembleTurnContext: values => assembleTurnContext({ ...turnInputs,
           memories: values.flatMap(v => v.type === "memory" ? [v.value] : []),
           personaStartBlocks: values.flatMap(v => v.type === "start" ? [v.value] : []),
@@ -345,19 +371,19 @@ export class ChatService {
         // Judgement failure cannot claim a neutral grant or suppress learning.
         await Promise.all([
           this.judgeBond(ctx, () => prepareBondJudgeInput(
-            [routedPersona.stablePersona.name, routedPersona.stablePersona.bio,
-              ...routedPersona.stablePersona.blocks.map(block => renderPersonaBlock(block, 1)),
-              ...routedPersona.stablePersona.canonMemories.map(memory => typeof memory === "string" ? memory : memory.content)].join("\n\n"),
+            personaReference,
             assembleTurnContext({ ...turnInputs, memories,
               personaStartBlocks: routedPersona.startOnlyBlocks,
               personaRetrievedBlocks: routedPersona.retrievedBlocks,
               characterMemories: routedPersona.retrievedCanonMemories }),
             messages, assistantContent,
-          )),
+          ), publish),
           this.enqueueConsolidation(ctx, messages, assistantContent, summary),
         ]);
       },
-      tools: serverToolsActive ? this.tools : undefined,
+      tools: serverTools,
+      experience,
+      observeExperience: listener => { experienceListener = listener; },
       promptDebug: {
         schemaVersion: 1,
         stablePromptSha256: createHash("sha256").update(systemPrompt, "utf8").digest("hex"),
@@ -552,7 +578,7 @@ export class ChatService {
   }
 
   /** Only successful judgements consume the existing exactly-once operation key. */
-  private async judgeBond(ctx: ChatContext, input: () => BondJudgeInput | null): Promise<void> {
+  private async judgeBond(ctx: ChatContext, input: () => BondJudgeInput | null, publish: (update: CharacterExperience) => void): Promise<void> {
     if (!ctx.userId || !ctx.characterId || !ctx.turnId) return;
     try {
       const prepared = input();
@@ -561,11 +587,12 @@ export class ChatService {
         this.log.warn("bond judgement skipped", { reason: result.reason, requestId: ctx.requestId });
         return;
       }
-      await this.memory.grantBond(
+      const state = await this.memory.grantBond(
         { userId: ctx.userId, characterId: ctx.characterId },
         { grade: result.grade, nowMs: this.clock().getTime() },
         `${ctx.sessionId ?? ""}:${ctx.turnId}`,
       );
+      publish({ relationship: publicBond(state, state.bondDelta) });
     } catch {
       // Do not leak provider exceptions, credentials or conversation text.
       this.log.warn("bond judgement or grant failed", { requestId: ctx.requestId });

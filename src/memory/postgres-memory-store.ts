@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type {
   GrantBondInput,
+  BondGrantResult,
   MemoryStore,
   MemoryRetrievalResult,
   NewMemory,
@@ -424,8 +425,15 @@ export class PostgresMemoryStore implements MemoryStore {
     key: RelationshipKey,
     input: GrantBondInput,
     operationKey?: string,
-  ): Promise<RelationshipState> {
+  ): Promise<BondGrantResult> {
     return this.withTransaction(async (client) => {
+      // Materialize a new relationship before locking: SELECT FOR UPDATE alone
+      // cannot serialize two grants when the row does not exist yet.
+      await client.query(
+        `INSERT INTO opod.chat_relationship_states (user_id, character_id, updated_at)
+         VALUES ($1, $2, $3) ON CONFLICT (user_id, character_id) DO NOTHING`,
+        [key.userId, key.characterId, this.now()],
+      );
       // SELECT ... FOR UPDATE, not a bare read: the level floor and the daily
       // cap are read-modify-write, so two turns landing on the same
       // relationship at once would otherwise both compute from the same
@@ -440,7 +448,7 @@ export class PostgresMemoryStore implements MemoryStore {
 
       if (operationKey) {
         const fresh = await this.claimOperation(client, key, `bond:${operationKey}`);
-        if (!fresh) return before;
+        if (!fresh) return { ...before, bondDelta: 0 };
       }
 
       const next = nextBondState(
@@ -478,7 +486,8 @@ export class PostgresMemoryStore implements MemoryStore {
           this.now(),
         ],
       );
-      return this.mapRelationshipRow(key, updated.rows[0]);
+      const state = this.mapRelationshipRow(key, updated.rows[0]);
+      return { ...state, bondDelta: state.bondXp - before.bondXp };
     });
   }
 

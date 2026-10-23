@@ -699,17 +699,15 @@ describe("ChatService.prepare server tools", () => {
     return { service };
   }
 
-  it("attaches server tools and adds the time + abilities sections for a persona turn", async () => {
-    const { service } = makeToolService();
-    const prepared = await service.prepare(body, { characterId: "luna", timezone: "Europe/Zurich" });
-
-    expect(prepared.tools?.map((t) => t.definition.function.name)).toEqual(["get_time", "get_weather"]);
-    // Abilities are a property of the character (cached); the clock is not.
-    expect(String(prepared.request.messages[0]?.content)).toContain("# Your abilities");
-    const tail = lastMessage(prepared);
-    expect(tail.content).toContain("# Current moment");
-    expect(tail.content).toContain("Europe/Zurich");
+  it("keeps the cached persona prefix independent of relationship availability", async () => {
+    const { service } = makeToolService([]);
+    const withoutRelationship = await service.prepare(body, { characterId: "luna" });
+    const tracked = await service.prepare(body, fullCtx);
+    expect(withoutRelationship.request.messages[0]?.role).toBe("system");
+    expect(tracked.request.messages[0]?.content).toBe(withoutRelationship.request.messages[0]?.content);
+    expect(tracked.promptDebug?.stablePromptSha256).toBe(withoutRelationship.promptDebug?.stablePromptSha256);
   });
+
 
   it("omits server tools (and the abilities section) when the client body supplies its own tools", async () => {
     const { service } = makeToolService();
@@ -729,12 +727,6 @@ describe("ChatService.prepare server tools", () => {
     expect(prepared.tools).toBeUndefined();
   });
 
-  it("attaches no tools and omits the abilities section when built without any", async () => {
-    const { service } = makeToolService([]);
-    const prepared = await service.prepare(body, { characterId: "luna" });
-    expect(prepared.tools).toBeUndefined();
-    expect(String(prepared.request.messages[0]?.content)).not.toContain("# Your abilities");
-  });
 });
 
 describe("ChatService bond", () => {

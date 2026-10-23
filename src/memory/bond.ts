@@ -135,6 +135,8 @@ export function recencyFor(msSinceLastExchange: number): BondRecency {
 
 export interface BondSnapshot {
   level: number;
+  /** Fraction within this level; used for gradual voice changes, not read aloud. */
+  progress: number;
   recency: BondRecency;
 }
 
@@ -143,8 +145,32 @@ export function bondSnapshot(
   nowMs: number,
 ): BondSnapshot {
   return {
+    progress: bondProgressForXp(state.bondXp),
     level: bondLevelForXp(state.bondXp),
     recency: recencyFor(Math.max(0, nowMs - state.lastExchangeAtMs)),
+  };
+}
+
+function bondProgressForXp(xp: number): number {
+  const level = bondLevelForXp(xp);
+  if (level === MAX_BOND_LEVEL) return 1;
+  const floor = BOND_LEVEL_XP[level - 1] as number;
+  const ceiling = BOND_LEVEL_XP[level] as number;
+  return Math.max(0, Math.min(1, (xp - floor) / (ceiling - floor)));
+}
+
+const BOND_LABELS = ["알아가는 사이", "조금 익숙한 사이", "편안한 사이", "마음을 나누는 사이", "깊이 이어진 사이"] as const;
+
+/** Public projection has no raw XP or judging rationale. */
+export function publicBond(state: { bondXp: number }, delta: number): {
+  level: number; label: string; progress: number; change: "closer" | "steady" | "distant";
+} {
+  const level = bondLevelForXp(state.bondXp);
+  return {
+    level,
+    label: BOND_LABELS[level - 1] as string,
+    progress: bondProgressForXp(state.bondXp),
+    change: delta > 0 ? "closer" : delta < 0 ? "distant" : "steady",
   };
 }
 

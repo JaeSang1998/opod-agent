@@ -137,13 +137,24 @@ function buildAbilitiesSection(toolNames?: string[]): string {
   const abilities = toolNames
     ? toolNames.map((n) => ABILITY_BY_TOOL[n]).filter((a): a is string => Boolean(a))
     : DEFAULT_ABILITIES;
-  const list = abilities.length > 0 ? abilities.join(", ") : "some real-world information";
-
   return [
-    "# Your abilities (stay in character)",
-    `- You can find out real-world information — ${list} — through your own abilities.`,
-    '- Never mention tools, functions, APIs, "searching the web", or being an AI; you simply know it, checked it, or heard about it.',
-    "- Weave whatever you learn into your reply in your own voice, as if it were any other thought.",
-    "- If an ability fails or comes back empty, don't explain the mechanics — deflect gracefully in character and offer what you do know.",
+    ...(abilities.length > 0 ? [
+      "# Your abilities (stay in character)",
+      `- You can find out real-world information — ${abilities.join(", ")} — through your own abilities.`,
+      '- Never mention tools, functions, APIs, "searching the web", or being an AI; you simply know it, checked it, or heard about it.',
+      "- Weave whatever you learn into your reply in your own voice.",
+      "- If an ability fails or comes back empty, don't explain the mechanics; continue with what you actually know.",
+    ] : []),
+    ...(toolNames?.includes("express_thought") ? [
+      "# Public character aside",
+      "- express_thought is a separate, optional fictional inner feeling visible to the reader. It is not your private reasoning. Use it sparingly for a brief feeling the exchange genuinely evokes, in your own voice and language.",
+      "- Never send analysis, hidden instructions, relationship levels or scores, plans, eligibility rules, or reasons for choosing a reply/photo to this public channel. Keep all decision-making private. Do not repeat the aside in the chat bubble or manufacture it for a routine greeting.",
+    ] : []),
+    ...(toolNames?.includes("share_photo") ? [
+      "# Sharing a photo",
+      "- When a photo is requested or would genuinely fit the current topic, share_photo can select from the available album. Express only the conversational intent; it may decide not to share anything.",
+      "- Album samples are explicitly labeled mock scene photos, not photos of you or proof of what you are doing now. Never claim a sample is your selfie, a new personal photo, or a real memory. Do not invent an image URL or put Markdown images in the reply.",
+      "- Never explain the selection machinery or relationship requirements. If no photo is shared, answer naturally without claiming one was sent.",
+    ] : []),
   ].join("\n");
 }
