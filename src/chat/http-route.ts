@@ -8,12 +8,8 @@ import { openaiError } from "../http/errors.js";
 import { classifyRequestError, createRequestSignal } from "../http/request-lifecycle.js";
 import { type ToolLoopEvent, runToolLoop, runToolLoopStream } from "./tool-loop.js";
 import type { PreparedTurn } from "./chat-service.js";
-import {
-  type BondSignalRedactor,
-  createBondSignalRedactor,
-  extractBondSignal,
-} from "./bond-signal.js";
 import { LLM_LOG_TYPE } from "../provider/llm-provider.js";
+import { publicCompletion } from "./character-experience.js";
 
 /** POST /v1/chat/completions — OpenAI-compatible, persona+memory-enriched. */
 export function chatRoute(container: Container): Hono {
@@ -57,16 +53,14 @@ export function chatRoute(container: Container): Hono {
     if (body.stream) {
       return streamSSE(c, async (sse) => {
         let assistant = "";
-        let completed = false;
-        // The character's closeness grade rides out on the same channel as its
-        // words (chat/bond-signal.ts). It is removed here, before the first
-        // byte of it can reach a client.
-        const redactor = prepared.expectsBondSignal ? createBondSignalRedactor() : null;
         // Serialize every SSE write through one promise chain so debug event frames
         // (emitted mid-loop via onEvent) and chunk frames never interleave mid-frame.
         let chain: Promise<unknown> = Promise.resolve();
         const write = (frame: Parameters<typeof sse.writeSSE>[0]) =>
           (chain = chain.then(() => sse.writeSSE(frame)));
+        prepared.observeExperience?.(update => {
+          void write({ event: "character", data: JSON.stringify(update) });
+        });
         try {
           const stream = prepared.tools
             ? runToolLoopStream({
@@ -101,41 +95,22 @@ export function chatRoute(container: Container): Hono {
               },
             );
 
-          let lastFrame: OpenAI.Chat.Completions.ChatCompletionChunk | undefined;
           for await (const chunk of stream) {
-            const frame = redactor ? redactChunk(redactor, chunk) : chunk;
-            if (!frame) continue;
-            lastFrame = frame;
-            assistant += frame.choices[0]?.delta?.content ?? "";
-            write({ data: JSON.stringify(frame) });
-          }
-          // A stream that ended without a finish_reason never triggered the
-          // flush inside redactChunk. Whatever is still held is ordinary text
-          // and belongs to the client.
-          const tail = redactor?.flush() ?? "";
-          if (tail && lastFrame) {
-            assistant += tail;
-            const choice = lastFrame.choices[0];
-            write({
-              data: JSON.stringify({
-                ...lastFrame,
-                choices: [{ index: choice?.index ?? 0, delta: { content: tail }, finish_reason: null }],
-              }),
-            });
+            assistant += chunk.choices[0]?.delta?.content ?? "";
+            write({ data: JSON.stringify(chunk) });
           }
           await chain;
+          // Judge only a completed reply. Public relationship feedback must
+          // arrive before DONE; native provider reasoning is never that feedback.
+          await prepared.postTurn(assistant);
+          await chain;
           await sse.writeSSE({ data: "[DONE]" });
-          completed = true;
         } catch (err) {
           const failure = classifyRequestError(err);
           container.log.error("stream error", { err: String(err), requestId: ctx.requestId });
           await sse.writeSSE({
             data: JSON.stringify(openaiError(failure.type, failure.message)),
           });
-        } finally {
-          // Never learn from a truncated/error reply. Consolidate only after the
-          // provider stream completed and the client received the DONE frame.
-          if (completed) await prepared.postTurn(assistant, redactor?.grade()).catch(() => {});
         }
       });
     }
@@ -170,18 +145,13 @@ export function chatRoute(container: Container): Hono {
             },
           },
         );
-      const raw = res.choices[0]?.message?.content ?? "";
-      const { text: assistant, grade } = prepared.expectsBondSignal
-        ? extractBondSignal(raw)
-        : { text: raw, grade: null };
-      await prepared.postTurn(assistant, grade);
-      const body = assistant === raw ? res : withMessageContent(res, assistant);
-      // The opt-in debug field is content-free: tool activity plus prompt
-      // provenance, never Persona/Memory text. Without the header the body stays
-      // exactly the completion as before.
-      return debug && prepared.promptDebug
-        ? c.json({ ...body, opod_debug: { events, prompt: prepared.promptDebug } })
-        : c.json(body);
+      await prepared.postTurn(res.choices[0]?.message?.content ?? "");
+      const completion = prepared.experience ? publicCompletion(res) : res;
+      return c.json({
+        ...completion,
+        ...(prepared.experience && Object.keys(prepared.experience).length > 0 ? { opod: prepared.experience } : {}),
+        ...(debug && prepared.promptDebug ? { opod_debug: { events, prompt: prepared.promptDebug } } : {}),
+      });
     } catch (err) {
       const failure = classifyRequestError(err);
       container.log.error("chat error", { err: String(err), requestId: ctx.requestId });
@@ -192,42 +162,3 @@ export function chatRoute(container: Container): Hono {
   return app;
 }
 
-/**
- * One streamed chunk, with any part of a closeness tag taken out of it.
- *
- * Returns null when the delta was *only* tag and there is nothing else in the
- * frame worth sending — dropping it is what keeps a redacted stream looking
- * exactly like a stream that never carried a tag. The last chunk additionally
- * flushes whatever the redactor was still holding, so nothing arrives after the
- * frame that carries `finish_reason` and no client can miss it.
- */
-function redactChunk(
-  redactor: BondSignalRedactor,
-  chunk: OpenAI.Chat.Completions.ChatCompletionChunk,
-): OpenAI.Chat.Completions.ChatCompletionChunk | null {
-  const choice = chunk.choices[0];
-  const raw = choice?.delta?.content;
-  const last = choice != null && choice.finish_reason != null;
-  if (!choice || (typeof raw !== "string" && !last)) return chunk;
-
-  const content =
-    (typeof raw === "string" ? redactor.push(raw) : "") + (last ? redactor.flush() : "");
-  if (content === "") {
-    if (typeof raw !== "string") return chunk;
-    // An empty content delta still carries the opening role, tool calls, or the
-    // stop reason; only a frame with none of those is safe to swallow.
-    const bare = !last && !choice.delta?.role && !choice.delta?.tool_calls;
-    if (bare) return null;
-  }
-  return { ...chunk, choices: [{ ...choice, delta: { ...choice.delta, content } }] };
-}
-
-/** The same completion with its assistant text replaced. */
-function withMessageContent(
-  res: OpenAI.Chat.Completions.ChatCompletion,
-  content: string,
-): OpenAI.Chat.Completions.ChatCompletion {
-  const [choice, ...rest] = res.choices;
-  if (!choice) return res;
-  return { ...res, choices: [{ ...choice, message: { ...choice.message, content } }, ...rest] };
-}

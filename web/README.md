@@ -6,9 +6,10 @@ and [AI Elements](https://elements.ai-sdk.dev). This is the canonical local play
 ## What it does
 
 - Streams replies from opod-agent's OpenAI-compatible endpoint via `useChat`.
-- Renders the model's **thinking** (gemma is a reasoning model) in a collapsible
-  `<Reasoning>` block, separate from the answer.
-- Shows server-side tool calls as live running/done chips via the opt-in `event: opod` SSE channel.
+- Shows optional **fictional character feelings** as a small `속마음` aside, never native reasoning.
+- Displays selected scene photos with alt text and explicit mock-photo labeling.
+- Shows a restrained relationship label, with progress and change behind an expandable detail.
+- Shows lookup-tool activity via opt-in `event: opod`; public expression tools are not duplicated as raw tool chips.
 - Controls for **character / user / session** ids (sent as `x-opod-*` headers) so
   you can exercise persona load + memory retrieval.
 - A **Consolidate memory** button that runs opod's sleep-time passes over the
@@ -18,9 +19,9 @@ and [AI Elements](https://elements.ai-sdk.dev). This is the canonical local play
 
 The browser never talks to opod directly. Two server-side route handlers proxy it:
 
-- `app/api/chat/route.ts` — translates opod's OpenAI SSE into the AI SDK UI message
-  stream. mlx_lm returns reasoning in a separate `delta.reasoning` field, so this
-  route maps it to `reasoning-*` chunks by hand (no provider/middleware would).
+- `app/api/chat/route.ts` — translates text and validated `event: character` metadata into AI SDK
+  UI parts. Native `reasoning` fields are ignored even when talking to an older upstream agent.
+  Public thought, photo and relationship updates merge into one stable character data part.
 - `app/api/consolidate/route.ts` — thin proxy to `POST /memory/consolidate`.
 
 Set the backend URL in `.env.local` (defaults to `http://localhost:8787`):
@@ -48,5 +49,5 @@ The playground sends a fresh `turnId` for each user submission and reuses that r
 transport retries. It currently retains the whole browser transcript, so `historyOffset` is `0`; a
 backend that trims messages must send the number of omitted user/assistant turns instead.
 
-Attachments/image upload are intentionally absent because opod's persona/memory pipeline is text-only
-today. Add that capability as a separate chat module when the backend contract supports it.
+User image upload is intentionally absent. Character-selected sample album photos are supported;
+their metadata is not sent back as user text or used as evidence of a real shared experience.

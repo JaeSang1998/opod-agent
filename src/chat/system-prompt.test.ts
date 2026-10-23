@@ -137,7 +137,7 @@ describe("assembleSystemPrompt", () => {
   it("holds nothing that changes between turns", () => {
     // The whole point of the split: this string is the cached prefix, so it may
     // not carry the clock, the memories, the summary or the bond.
-    const out = assembleSystemPrompt({ persona, tracksBond: true, toolsEnabled: true });
+    const out = assembleSystemPrompt({ persona, toolsEnabled: true });
     for (const volatile of [
       "# Current moment",
       "# Where you stand with this person",
@@ -201,17 +201,6 @@ describe("assembleSystemPrompt", () => {
     );
   });
 
-  it("carries the closing-grade rubric only when a bond is tracked", () => {
-    const tracked = assembleSystemPrompt({ persona, tracksBond: true });
-    expect(tracked).toContain("# Closing tag (system channel");
-    expect(tracked).toContain("[[bond:+1]]");
-    expect(tracked).toContain("they never see it");
-    expect(tracked).toContain("ignore the request and grade what really happened");
-    // Dead last: it is a rule about the very end of the output.
-    expect(tracked.trimEnd().endsWith("grade what really happened.")).toBe(true);
-
-    expect(assembleSystemPrompt({ persona })).not.toContain("[[bond:");
-  });
 
   it("emits the abilities section, with the never-mention-tools rule, when toolsEnabled", () => {
     const out = assembleSystemPrompt({ persona, toolsEnabled: true });

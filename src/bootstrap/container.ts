@@ -28,6 +28,10 @@ import { type AgentTool, buildDefaultTools } from "../tools/index.js";
 import type { PersonaBlockSelector } from "../persona/persona-router.js";
 import { PersonaRoutingManifest, RoutedPersonaStore } from "../persona/routed-persona-store.js";
 import { KeyphrasePersonaBlockSelector } from "../persona/character-recall.js";
+import type { BondJudge } from "../chat/bond-judge.js";
+import { OpenRouterBondJudge } from "../chat/openrouter-bond-judge.js";
+import type { PhotoSelector } from "../chat/photo-selector.js";
+import { OpenRouterPhotoSelector } from "../chat/openrouter-photo-selector.js";
 
 export interface Container {
   env: Env;
@@ -36,6 +40,7 @@ export interface Container {
   memory: MemoryStore;
   queue: JobQueue;
   chat: ChatService;
+  photoSelector: PhotoSelector;
   consolidation: ConsolidationService;
   /** Present when Postgres is configured and the worker is enabled. */
   consolidationWorker?: ConsolidationWorker;
@@ -49,6 +54,8 @@ export interface Container {
  */
 export interface ContainerOverrides {
   provider?: LLMProvider;
+  bondJudge?: BondJudge;
+  photoSelector?: PhotoSelector;
   personas?: PersonaStore;
   memory?: MemoryStore;
   queue?: JobQueue;
@@ -156,6 +163,14 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
         })
       : []);
 
+  const photoSelector = overrides.photoSelector ?? new OpenRouterPhotoSelector({
+    apiKey: env.OPENROUTER_API_KEY,
+    apiKeyFile: env.OPENROUTER_API_KEY_FILE,
+    baseUrl: env.OPENROUTER_BASE_URL,
+    model: env.BOND_JUDGE_MODEL,
+    timeoutMs: env.BOND_JUDGE_TIMEOUT_MS,
+  });
+
   const chat = new ChatService(
     provider,
     personas,
@@ -174,6 +189,14 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     tools,
     overrides.clock,
     overrides.personaBlockSelector ?? new KeyphrasePersonaBlockSelector(),
+    overrides.bondJudge ?? new OpenRouterBondJudge({
+      apiKey: env.OPENROUTER_API_KEY,
+      apiKeyFile: env.OPENROUTER_API_KEY_FILE,
+      baseUrl: env.OPENROUTER_BASE_URL,
+      model: env.BOND_JUDGE_MODEL,
+      timeoutMs: env.BOND_JUDGE_TIMEOUT_MS,
+    }),
+    photoSelector,
   );
 
   const reflector = new Reflector(provider, memory, {
@@ -216,6 +239,7 @@ export function buildContainer(env: Env, overrides: ContainerOverrides = {}): Co
     memory,
     queue,
     chat,
+    photoSelector,
     consolidation,
     ...(consolidationWorker ? { consolidationWorker } : {}),
     tools,

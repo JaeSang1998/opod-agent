@@ -5,33 +5,27 @@ type Delta = Chunk["choices"][number]["delta"];
 type DeltaToolCall = Delta["tool_calls"] extends (infer T)[] | undefined ? T : never;
 type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;
 
-/** Keeps only the first streamed assistant role while preserving later payload fields. */
+/** Allowlist public deltas and emit the assistant role once; never stream reasoning. */
 export function createClientChunkFilter(): (chunk: Chunk) => Chunk | null {
   let roleSent = false;
   return (chunk) => {
-    const choice = chunk.choices[0];
-    const delta = choice?.delta;
-    if (!delta?.role) return chunk;
-    if (!roleSent) {
-      roleSent = true;
-      return chunk;
-    }
-
-    const { role: _role, ...rest } = delta;
-    const hasMore =
-      rest.content != null ||
-      rest.tool_calls != null ||
-      reasoningOf(rest) !== "" ||
-      choice?.finish_reason != null;
-    if (!hasMore) return null;
-    return { ...chunk, choices: [{ ...choice, delta: rest }] } as Chunk;
+    const choices = chunk.choices.map(choice => {
+      const delta: Delta = {};
+      if (choice.delta.role && !roleSent) {
+        delta.role = choice.delta.role;
+        roleSent = true;
+      }
+      if (choice.delta.content != null) delta.content = choice.delta.content;
+      if (choice.delta.refusal != null) delta.refusal = choice.delta.refusal;
+      return { index: choice.index, delta, finish_reason: choice.finish_reason, logprobs: null };
+    });
+    if (!chunk.usage && choices.every(choice => !choice.delta.role && !choice.delta.content && !choice.delta.refusal && !choice.finish_reason)) return null;
+    return {
+      id: chunk.id, object: chunk.object, created: chunk.created, model: chunk.model,
+      choices,
+      ...(chunk.usage ? { usage: chunk.usage } : {}),
+    };
   };
-}
-
-/** Reads the nonstandard reasoning string emitted by some local Providers. */
-export function reasoningOf(delta: Delta | undefined): string {
-  const value = (delta as Record<string, unknown> | undefined)?.reasoning;
-  return typeof value === "string" ? value : "";
 }
 
 /** Rewrites an exhausted completion into a tool-call-free stop turn. */

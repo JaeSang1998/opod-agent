@@ -105,11 +105,13 @@ describe("Next route contracts", () => {
     await expect(response.text()).resolves.toBe("opod-agent unavailable");
   });
 
-  it("translates upstream reasoning and content SSE into an AI UI stream", async () => {
+  it("only translates public character expressions and speech, never native reasoning", async () => {
     const frames = [
-      { choices: [{ delta: { reasoning: "thinking" } }] },
-      { choices: [{ delta: { content: "answer" } }] },
-    ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("");
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning: "PRIVATE_NATIVE", reasoning_content: "PRIVATE_RULE" } }] })}\n\n`,
+      `event: character\ndata: ${JSON.stringify({ thought: "조금 더 듣고 싶네.", reasoning: "PRIVATE_ASIDE", relationship: { level: 2, label: "조금 익숙한 사이", progress: 0.4, change: "closer" }, photo: { id: "mock:coffee", url: "https://example.test/coffee.jpg", alt: "커피 샘플", isMock: true } })}\n\n`,
+      `event: character\ndata: invalid-json\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "answer" } }] })}\n\n`,
+    ].join("");
     fetchOpodMock.mockResolvedValue(
       new Response(`${frames}data: [DONE]\n\n`, {
         headers: { "content-type": "text/event-stream" },
@@ -129,7 +131,10 @@ describe("Next route contracts", () => {
     const stream = await response.text();
 
     expect(response.status).toBe(200);
-    expect(stream).toContain("thinking");
+    expect(stream).not.toMatch(/PRIVATE_|reasoning-start|reasoning-delta/);
+    expect(stream).toContain("data-opodCharacter");
+    expect(stream).toContain("조금 더 듣고 싶네.");
+    expect(stream).toContain("mock:coffee");
     expect(stream).toContain("answer");
   });
 

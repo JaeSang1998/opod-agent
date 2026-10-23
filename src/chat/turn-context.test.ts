@@ -15,7 +15,7 @@ describe("assembleTurnContext", () => {
   });
 
   it("frames itself as system plumbing the person cannot see", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 2, recency: "close" } })!;
+    const out = assembleTurnContext({ ...empty, bond: { level: 2, progress: 0, recency: "close" } })!;
     expect(out.startsWith("<context>")).toBe(true);
     expect(out.trimEnd().endsWith("</context>")).toBe(true);
     expect(out).toContain("Never quote it, mention it, or answer it");
@@ -49,7 +49,7 @@ describe("assembleTurnContext", () => {
   });
 
   it("omits the Current moment section when no `now` is given", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 1, recency: "close" } })!;
+    const out = assembleTurnContext({ ...empty, bond: { level: 1, progress: 0, recency: "close" } })!;
     expect(out).not.toContain("# Current moment");
   });
 
@@ -93,78 +93,3 @@ describe("assembleTurnContext", () => {
   });
 });
 
-describe("the bond block", () => {
-  it("omits it when no bond is given", () => {
-    const out = assembleTurnContext({ ...empty, now: new Date("2026-07-16T08:42:00Z") })!;
-    expect(out).not.toContain("# Where you stand with this person");
-  });
-
-  it("states the bond as behaviour and never as a number", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 1, recency: "steady" } })!;
-    expect(out).toContain("# Where you stand with this person");
-    expect(out).toContain("Keep familiarity light");
-    expect(out).toContain("never mention or imply a level, score, percentage or number");
-    // The raw level must not leak into the prompt in any form.
-    expect(out).not.toMatch(/level\s*[:=]?\s*\d/i);
-  });
-
-  it("crosses depth with recency without inventing the length of a friendship", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 7, recency: "cool" } })!;
-    expect(out).toContain("A close, easygoing tone is available");
-    expect(out).toContain("been a while since you last talked");
-    expect(out).not.toContain("go a long way back");
-  });
-
-  it("does not infer a first meeting or erase known information from low closeness", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 1, recency: "close" } })!;
-    expect(out).not.toContain("Optional room for expression:");
-    expect(out).toContain("Avoid presumed intimacy");
-    expect(out).not.toContain("first real exchange");
-    expect(out).not.toContain("don't know their name");
-  });
-
-  it("opens new behaviour as the level rises, cumulatively", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 3, recency: "close" } })!;
-    expect(out).toContain("Optional room for expression:");
-    expect(out).toContain("- You may refer to something they actually shared"); // still granted from level 2
-    expect(out).toContain("- Light teasing or a more candid reaction can fit");
-    expect(out).toContain("Do not presume intimate disclosures");
-    expect(out).not.toContain("Bring up your own day");
-  });
-
-  it("stops naming what is still shut once nothing is", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 5, recency: "close" } })!;
-    expect(out).toContain("Shared shorthand can fit when its meaning is established in actual exchanges");
-    expect(out).not.toContain("Boundary at this closeness");
-  });
-
-  it("keeps the unlocks out of the character's mouth", () => {
-    const out = assembleTurnContext({ ...empty, bond: { level: 4, recency: "close" } })!;
-    expect(out).toContain("never tell them what you can or can't do yet");
-  });
-
-  it("sits ahead of the memory sections it governs", () => {
-    const out = assembleTurnContext({
-      ...empty,
-      bond: { level: 2, recency: "close" },
-      core: { userId: "u", characterId: "luna", content: "Loves cats.", updatedAt: "" },
-    })!;
-    expect(out.indexOf("# Where you stand with this person")).toBeLessThan(
-      out.indexOf("# What you know about this person"),
-    );
-  });
-
-  it.each([1, 2, 3, 4, 5])("keeps voice, topic and facts independent of closeness %s", (level) => {
-    const out = assembleTurnContext({
-      ...empty,
-      bond: { level, recency: "close" },
-      core: { userId: "u", characterId: "luna", content: "They introduced themselves as Min.", updatedAt: "" },
-    })!;
-    expect(out).toContain("They introduced themselves as Min.");
-    expect(out).toContain("permissions, not a checklist or a reason to change topic");
-    expect(out).toContain("Speech level follows the persona and the actual exchange");
-    if (level > 1) expect(out).toContain("Your last exchange was recent");
-    else expect(out).not.toContain("Your last exchange");
-    expect(out).not.toMatch(/ask more than you assume|Ask a follow-up|talking often lately|반말 fits|Say when you thought of them|go a long way back/);
-  });
-});

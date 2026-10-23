@@ -25,7 +25,7 @@ must keep working.
   short error string handed back to the model in-character rather than a 500.
 - **Streaming holds chunks back until the turn is known to be text.** Because a turn may open with
   `tool_call` deltas, the stream buffers until it can distinguish a tool turn from a text turn; tool-call
-  deltas are never forwarded, so the client sees only assistant prose (and reasoning) — no tool plumbing.
+  deltas are never forwarded, so the client sees assistant prose and explicit public character events — no native reasoning or tool plumbing.
 - **Client-supplied `tools` disable the server loop entirely.** When the request body carries its own
   tools, the Agent is a pure pass-through proxy (ADR 0003) and neither injects nor executes anything.
 - **Immersion is enforced in the prompt.** An abilities section tells the character it simply *knows* the
@@ -51,26 +51,30 @@ must keep working.
 - A missing `WEB_SEARCH_API_KEY` silently drops `web_search` from the registry; `get_time`/`get_weather`
   always work (Open-Meteo is keyless). Tool failures degrade to in-character error text, not HTTP errors.
 
-## Addendum: an opt-in debug channel and streamed reasoning
+## Addendum: opt-in tool debugging
 
-The default OpenAI-compatible surface stays byte-identical, but two things made the loop hard to observe from
-a client and are now addressed behind a single transport-level opt-in, the `x-opod-debug` request header (any
-non-empty value). It is read from the raw request only and never enters `RequestContext`/`ChatContext` — it
-carries no identity, only "show me the plumbing". When set, the tool loop's `onEvent` hook surfaces
-`{type:"tool_call"|"tool_result", callId, iteration, tool, …}` events: on the streaming path each is written as an
-SSE `event: opod` frame (all writes serialized through one promise chain so event and chunk frames never
-interleave), and on the non-streaming path they are collected into an `opod_debug: { events }` field on the
-JSON body. Without the header there are zero extra frames and no extra field — a strict client sees exactly
-the completion it saw before. The Provider call id joins results to calls even when parallel invocations of
-the same tool finish out of order. `onEvent` is best-effort: a throwing listener is swallowed and can never
-break a reply.
+The `x-opod-debug` request header (any non-empty value) independently enables tool-activity
+observations. It carries no identity and never enters `RequestContext`/`ChatContext`.
+The loop's best-effort `onEvent` hook emits `{type:"tool_call"|"tool_result", callId, iteration, tool, …}`.
+Streaming writes serialize `event: opod` frames with chat frames; JSON replies collect events
+alongside content-free prompt provenance in `opod_debug`. Without the header there is no debug data.
+This channel is not the public character experience and is never requested by the product web.
 
-Separately, the streaming loop now passes a turn's nonstandard `reasoning` deltas straight through instead of
-buffering them. Local reasoning models (live-verified gemma) emit `delta.reasoning` fragments — with
-`delta.role` on every chunk — for minutes before any `delta.content`; the earlier buffer-until-known logic
-dropped all but one of them, leaving clients looking dead until the final answer. Reasoning can never
-retroactively become content, so forwarding it immediately is safe. A tool turn's early reasoning (before its
-`tool_calls` fragment settles the turn) streams too; the field is nonstandard and ignored by strict OpenAI
-clients, and the alternative — withholding minutes of thinking — is worse. Once a turn is known to be a tool
-turn, everything from it (reasoning included) is suppressed, and at most one `role` delta ever reaches the
-client across the whole multi-turn stream.
+
+## Addendum: public character expressions, private native reasoning
+
+The earlier native-reasoning passthrough is removed. The streaming filter allowlists role, content,
+refusal and completion metadata; personalized JSON messages also use an allowlist. Provider
+`reasoning`, `reasoning_content`, `reasoning_details`, unknown fields and logprobs never become
+character thoughts. Opening-frame buffering is bounded even when a local model repeats its role
+on every native-reasoning fragment.
+
+Persona turns bind per-turn `express_thought` and `share_photo` tools. The first publishes an
+optional short fictional feeling, with operational narration rejected. The second asks JEV
+Decisions to choose an eligible server-owned sample scene or no photo, with no fallback on failure.
+Public JSON `opod` and streaming `event: character` carry only thought/photo/relationship fields,
+independently of the debug flag. Atomic persisted bond deltas determine relationship feedback,
+including caps, losses and replay no-ops; the final update precedes `[DONE]`.
+
+The playground discards native reasoning even from older agents and hides raw public-expression
+tool chips. Client-supplied tools and plain proxy requests retain ADR 0003 passthrough semantics.

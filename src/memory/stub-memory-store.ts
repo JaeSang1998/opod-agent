@@ -1,5 +1,6 @@
 import type {
   GrantBondInput,
+  BondGrantResult,
   MemoryStore,
   MemoryRetrievalResult,
   NewMemory,
@@ -241,10 +242,10 @@ export class StubMemoryStore implements MemoryStore {
     key: RelationshipKey,
     input: GrantBondInput,
     operation?: string,
-  ): Promise<RelationshipState> {
+  ): Promise<BondGrantResult> {
     const operationId = operation ? operationKey(key, `bond:${operation}`) : null;
     if (operationId && this.bondOperations.has(operationId)) {
-      return this.getRelationshipState(key);
+      return { ...await this.getRelationshipState(key), bondDelta: 0 };
     }
     const current = this.states.get(relKey(key)) ?? this.blankState(key);
     const grant = nextBondState(
@@ -267,7 +268,7 @@ export class StubMemoryStore implements MemoryStore {
     };
     this.states.set(relKey(key), next);
     if (operationId) this.bondOperations.add(operationId);
-    return structuredClone(next);
+    return { ...structuredClone(next), bondDelta: next.bondXp - current.bondXp };
   }
 
   /**

@@ -23,9 +23,8 @@ the relationship levels up are, by definition, per-turn state.
 Split the prompt by *how often it changes*, not by what it is about.
 
 - **The system prompt holds only what is stable for a character**: identity and bio, Persona blocks
-  routed as `always`, canon facts, the DM channel framing, abilities, the stay-in-character line, and
-  the closing-tag rubric (the same text every turn — only the state it grades moves). It is byte-identical
-  from one turn to the next, so it caches.
+  routed as `always`, canon facts, the DM channel framing, abilities, and the stay-in-character line.
+  It is byte-identical from one turn to the next, so it caches.
 - **Everything per-turn rides in a `<context>` block inside the last user message, before its original text**: current moment,
   where the relationship stands and what it now permits, first-contact or relevance-selected Persona
   blocks, the core block, the session summary, and retrieved memories. It sits *behind* the entire
@@ -34,8 +33,9 @@ Split the prompt by *how often it changes*, not by what it is about.
 - **The block is framed as system plumbing** ("This block is from the system, not from them — they cannot
   see it. Never quote it, mention it, or answer it."), because it arrives inside a user message and a
   character will otherwise eventually answer the note instead of the person.
-- **`tracksBond` is derived from identity, not from a loaded snapshot**, so a transient store failure
-  cannot flip the system prompt for one turn and cost a cache hit on top of the failure.
+- **Bond grading is independent of generation**: the JEV Decisions adapter owns the rubric and receives
+  bounded reference data after a successful reply. Neither grading instructions nor a closing-tag
+  protocol belong in the generation prompt; identity determines whether post-turn judging applies.
 
 ## Considered options
 

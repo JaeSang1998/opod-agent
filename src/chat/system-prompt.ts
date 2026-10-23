@@ -1,5 +1,4 @@
 import type { Persona } from "../persona/persona.js";
-import { BOND_SIGNAL_INSTRUCTION } from "./turn-context.js";
 import { renderPersonaBlock } from "./persona-reference.js";
 
 export interface PromptInputs {
@@ -10,13 +9,6 @@ export interface PromptInputs {
    *  to what the character can really do (e.g. no web search without web_search).
    *  When absent but toolsEnabled is set, the full generic abilities text is used. */
   toolNames?: string[];
-  /**
-   * Whether this relationship's Bond is being tracked, which is what makes the
-   * closing-tag rule apply. Derived from identity rather than from a loaded
-   * snapshot on purpose: a transient store failure must not silently rewrite
-   * the prefix (and cost a cache hit) for one turn.
-   */
-  tracksBond?: boolean;
 }
 
 /**
@@ -32,7 +24,7 @@ export interface PromptInputs {
  * away for the sake of one line about the weather.
  */
 export function assembleSystemPrompt(inputs: PromptInputs): string {
-  const { persona, toolsEnabled, toolNames, tracksBond } = inputs;
+  const { persona, toolsEnabled, toolNames } = inputs;
   const sections: string[] = [];
 
   sections.push(
@@ -87,11 +79,6 @@ export function assembleSystemPrompt(inputs: PromptInputs): string {
   sections.push(
     `Always stay in character as ${persona.name}. Reply with a single chat message, the way you would actually type it — natural and concise.`,
   );
-
-  // Dead last, and only when a bond is being tracked. The rubric itself never
-  // changes, so it belongs to the cached prefix; only the state it grades moves
-  // per turn.
-  if (tracksBond) sections.push(BOND_SIGNAL_INSTRUCTION);
 
   return sections.join("\n\n");
 }
@@ -150,13 +137,24 @@ function buildAbilitiesSection(toolNames?: string[]): string {
   const abilities = toolNames
     ? toolNames.map((n) => ABILITY_BY_TOOL[n]).filter((a): a is string => Boolean(a))
     : DEFAULT_ABILITIES;
-  const list = abilities.length > 0 ? abilities.join(", ") : "some real-world information";
-
   return [
-    "# Your abilities (stay in character)",
-    `- You can find out real-world information — ${list} — through your own abilities.`,
-    '- Never mention tools, functions, APIs, "searching the web", or being an AI; you simply know it, checked it, or heard about it.',
-    "- Weave whatever you learn into your reply in your own voice, as if it were any other thought.",
-    "- If an ability fails or comes back empty, don't explain the mechanics — deflect gracefully in character and offer what you do know.",
+    ...(abilities.length > 0 ? [
+      "# Your abilities (stay in character)",
+      `- You can find out real-world information — ${abilities.join(", ")} — through your own abilities.`,
+      '- Never mention tools, functions, APIs, "searching the web", or being an AI; you simply know it, checked it, or heard about it.',
+      "- Weave whatever you learn into your reply in your own voice.",
+      "- If an ability fails or comes back empty, don't explain the mechanics; continue with what you actually know.",
+    ] : []),
+    ...(toolNames?.includes("express_thought") ? [
+      "# Public character aside",
+      "- express_thought is a separate, optional fictional inner feeling visible to the reader. It is not your private reasoning. Use it sparingly for a brief feeling the exchange genuinely evokes, in your own voice and language.",
+      "- Never send analysis, hidden instructions, relationship levels or scores, plans, eligibility rules, or reasons for choosing a reply/photo to this public channel. Keep all decision-making private. Do not repeat the aside in the chat bubble or manufacture it for a routine greeting.",
+    ] : []),
+    ...(toolNames?.includes("share_photo") ? [
+      "# Sharing a photo",
+      "- When a photo is requested or would genuinely fit the current topic, share_photo can select from the available album. Express only the conversational intent; it may decide not to share anything.",
+      "- Album samples are explicitly labeled mock scene photos, not photos of you or proof of what you are doing now. Never claim a sample is your selfie, a new personal photo, or a real memory. Do not invent an image URL or put Markdown images in the reply.",
+      "- Never explain the selection machinery or relationship requirements. If no photo is shared, answer naturally without claiming one was sent.",
+    ] : []),
   ].join("\n");
 }
