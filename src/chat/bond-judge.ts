@@ -9,7 +9,7 @@ export interface BondJudgeInput {
   recentTurns: { role: "user" | "assistant"; content: string }[];
 }
 
-export type BondJudgeFailure = "configuration" | "context-too-large" | "authentication" | "rate-limit" | "unavailable" | "network" | "timeout" | "invalid-response";
+type BondJudgeFailure = "configuration" | "context-too-large" | "authentication" | "rate-limit" | "unavailable" | "network" | "timeout" | "invalid-response";
 export type BondJudgement = { ok: true; grade: BondGrade } | { ok: false; reason: BondJudgeFailure };
 
 export interface BondJudge {

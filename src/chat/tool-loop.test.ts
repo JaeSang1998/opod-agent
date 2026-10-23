@@ -388,9 +388,21 @@ describe("runToolLoopStream", () => {
     );
   });
 
-  it("streams gemma-style reasoning live across a tool turn and a text turn", async () => {
-    // Turn 1 (tool): reasoning fragments (role on EVERY chunk), then a tool_calls
-    // fragment, then the tool_calls finish. Turn 2 (text): reasoning then content.
+  it("streams public refusal fragments while keeping native reasoning private", async () => {
+    const provider = streamProviderOf([[
+      chunk({ role: "assistant" }),
+      reasoningChunk("PRIVATE_REFUSAL_ANALYSIS"),
+      chunk({ refusal: "I cannot " }),
+      chunk({ refusal: "help with that." }),
+      chunk({}, "stop"),
+    ]]);
+    const chunks = await collect(runToolLoopStream({ provider, request: baseRequest(), tools: [], ctx }));
+    expect(chunks.map(value => value.choices[0]?.delta.refusal ?? "").join("")).toBe("I cannot help with that.");
+    expect(JSON.stringify(chunks)).not.toContain("PRIVATE_REFUSAL_ANALYSIS");
+    expect(chunks.at(-1)?.choices[0]?.finish_reason).toBe("stop");
+  });
+
+  it("keeps native reasoning private across both a tool turn and a text turn", async () => {
     const provider = streamProviderOf([
       [
         reasoningChunk("weighing "),
@@ -415,9 +427,8 @@ describe("runToolLoopStream", () => {
       runToolLoopStream({ provider, request: baseRequest(), tools: [tool], ctx }),
     );
 
-    // Reasoning from BOTH the tool turn (before its tool_calls) and the text turn
-    // reaches the client, live.
-    expect(chunks.map(reasoningOf).join("")).toBe("weighing options almost there ");
+    expect(chunks.map(reasoningOf).join("")).toBe("");
+    expect(JSON.stringify(chunks)).not.toMatch(/weighing|options|almost there/);
     // The text turn's content reaches the client.
     expect(chunks.map((c) => c.choices[0]?.delta?.content ?? "").join("")).toBe("It is noon.");
     // Exactly one role delta total, and zero tool_calls deltas.

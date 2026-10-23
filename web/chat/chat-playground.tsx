@@ -6,7 +6,7 @@ import { DefaultChatTransport } from "ai";
 import { useEffect, useMemo, useState } from "react";
 import type { CharacterOption } from "./character-option";
 import { ChatControls, type ChatSettings } from "./chat-controls";
-import { MessageFeed } from "./message-feed";
+import { MessageFeed, type PlaygroundMessage } from "./message-feed";
 import {
   PromptInput,
   PromptInputBody,
@@ -49,7 +49,7 @@ export function ChatPlayground({ characters = [] }: { characters?: CharacterOpti
   }, []);
 
   const transport = useMemo(() => new DefaultChatTransport({ api: "/api/chat" }), []);
-  const { error, messages, sendMessage, setMessages, status } = useChat({ transport });
+  const { error, messages, sendMessage, setMessages, status } = useChat<PlaygroundMessage>({ transport });
   const {
     consolidate,
     reset: resetConsolidation,

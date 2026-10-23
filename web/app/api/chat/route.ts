@@ -7,22 +7,13 @@ import { PlaygroundChatRequest } from "@/backend/chat-contract";
 import { opodChatHeaders, toOpodChatRequest } from "@/backend/opod-chat-request";
 import { readSSEEvents } from "@/chat/openai-sse";
 import { createToolEventReducer } from "@/chat/tool-events";
-import { OPOD_HEADERS } from "@opod/protocol";
+import { CharacterExperience, OPOD_HEADERS } from "@opod/protocol";
 
 /** A 30B reasoning model on local hardware is slow — don't cut it off. */
 export const maxDuration = 800;
 
-/**
- * Bridges opod-agent (OpenAI-compatible wire format) to the AI SDK UI message
- * stream that `useChat` consumes.
- *
- * The reason this is hand-rolled rather than using an openai-compatible
- * provider: mlx_lm.server returns the model's thinking in a separate
- * `delta.reasoning` field (not `<think>` tags in content, not
- * `reasoning_content`), so neither the provider's default mapping nor
- * `extractReasoningMiddleware` would surface it. Translating the SSE directly
- * lets reasoning render in the <Reasoning> component.
- */
+/** Bridge text and explicitly public character events to AI SDK UI parts.
+ * Provider reasoning is never a display channel, including from older agents. */
 export async function POST(req: Request) {
   const raw = await req.json().catch(() => null);
   const parsed = PlaygroundChatRequest.safeParse(raw);
@@ -62,7 +53,7 @@ export async function POST(req: Request) {
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      let reasoningOpen = false;
+      let experience: CharacterExperience = {};
       let textOpen = false;
       let done = false;
       const reduceToolEvent = createToolEventReducer();
@@ -80,10 +71,24 @@ export async function POST(req: Request) {
             } catch {
               continue;
             }
+            if (typeof toolEvent === "object" && toolEvent !== null && "tool" in toolEvent &&
+              (toolEvent.tool === "express_thought" || toolEvent.tool === "share_photo")) continue;
             const part = reduceToolEvent(toolEvent);
             if (part) writer.write({ type: "data-opodTool", id: part.id, data: part });
             continue;
           }
+
+          if (frame.event === "character") {
+            try {
+              const parsed = CharacterExperience.safeParse(JSON.parse(frame.data));
+              if (parsed.success) {
+                experience = { ...experience, ...parsed.data };
+                writer.write({ type: "data-opodCharacter", id: "character", data: experience });
+              }
+            } catch { continue; }
+            continue;
+          }
+          if (frame.event) continue;
 
           const payload = frame.data;
           if (payload === "[DONE]") {
@@ -93,7 +98,7 @@ export async function POST(req: Request) {
 
           let chunk: {
             error?: { message?: string };
-            choices?: { delta?: { content?: string; reasoning?: string } }[];
+            choices?: { delta?: { content?: string } }[];
           };
           try {
             chunk = JSON.parse(payload);
@@ -108,24 +113,8 @@ export async function POST(req: Request) {
           const delta = chunk.choices?.[0]?.delta;
           if (!delta) continue;
 
-          if (delta.reasoning) {
-            if (!reasoningOpen) {
-              writer.write({ type: "reasoning-start", id: "reasoning" });
-              reasoningOpen = true;
-            }
-            writer.write({
-              type: "reasoning-delta",
-              id: "reasoning",
-              delta: delta.reasoning,
-            });
-          }
 
           if (delta.content) {
-            // Thinking always precedes the answer — close it on first content.
-            if (reasoningOpen) {
-              writer.write({ type: "reasoning-end", id: "reasoning" });
-              reasoningOpen = false;
-            }
             if (!textOpen) {
               writer.write({ type: "text-start", id: "text" });
               textOpen = true;
@@ -139,7 +128,6 @@ export async function POST(req: Request) {
         }
         if (!done) throw new Error("upstream SSE ended before [DONE]");
       } finally {
-        if (reasoningOpen) writer.write({ type: "reasoning-end", id: "reasoning" });
         if (textOpen) writer.write({ type: "text-end", id: "text" });
       }
     },

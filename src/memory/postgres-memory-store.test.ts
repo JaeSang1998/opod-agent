@@ -88,6 +88,23 @@ describe.skipIf(!databaseUrl)("PostgresMemoryStore (integration)", () => {
     await pool.end();
   });
 
+  it("serializes the first concurrent bond grants and reports only the applied change", async () => {
+    const key = freshKey();
+    const nowMs = Date.now();
+    const outcomes = await Promise.all([
+      store.grantBond(key, { grade: 2, nowMs }, "first"),
+      store.grantBond(key, { grade: 2, nowMs }, "second"),
+    ]);
+    expect((await store.getRelationshipState(key)).bondXp).toBe(32);
+    expect(outcomes.map(outcome => outcome.bondDelta)).toEqual([16, 16]);
+    const replay = await store.grantBond(key, { grade: 2, nowMs }, "first");
+    expect(replay.bondXp).toBe(32);
+    expect(replay.bondDelta).toBe(0);
+    const loss = await store.grantBond(key, { grade: -2, nowMs }, "negative");
+    expect(loss.bondXp).toBe(8);
+    expect(loss.bondDelta).toBe(-24);
+  });
+
   it("stores a batch once and returns the original rows on operation retry", async () => {
     const key = freshKey();
     const first = await store.upsertMany(

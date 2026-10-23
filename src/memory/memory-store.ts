@@ -65,6 +65,9 @@ export interface GrantBondInput {
   nowMs: number;
 }
 
+/** Atomic outcome, so concurrent turns and capped/replayed grants cannot fake a change. */
+export type BondGrantResult = RelationshipState & { bondDelta: number };
+
 /**
  * Data-access seam for memory (docs/adr/0002, 0005). Default (stub) is in-memory;
  * the Postgres + pgvector adapter lands once the schema is confirmed.
@@ -133,7 +136,7 @@ export interface MemoryStore {
     key: RelationshipKey,
     input: GrantBondInput,
     operationKey?: string,
-  ): Promise<RelationshipState>;
+  ): Promise<BondGrantResult>;
   /**
    * Atomic compare-and-consume of the reflection accumulator. If
    * `importanceSinceReflection >= threshold`, subtract `threshold` (leaving any
