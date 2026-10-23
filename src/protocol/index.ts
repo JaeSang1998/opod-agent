@@ -25,6 +25,29 @@ export const ChatCompletionRequest = z
   .passthrough();
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequest>;
 
+/** Public fiction/feedback only. Unknown provider/debug fields are discarded. */
+export const CharacterExperience = z.object({
+  thought: z.string().trim().min(1).max(120).optional(),
+  photo: z.object({
+    id: z.string().min(1).max(128),
+    url: z.string().url().max(2048).refine(value => {
+      try {
+        const url = new URL(value);
+        return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+      } catch { return false; }
+    }),
+    alt: z.string().trim().min(1).max(500),
+    isMock: z.boolean(),
+  }).optional(),
+  relationship: z.object({
+    level: z.number().int().min(1).max(5),
+    label: z.string().trim().min(1).max(100),
+    progress: z.number().finite().min(0).max(1),
+    change: z.enum(["closer", "steady", "distant"]),
+  }).refine(value => value.level !== 5 || value.progress === 1).optional(),
+});
+export type CharacterExperience = z.infer<typeof CharacterExperience>;
+
 export const ConsolidationReason = z.enum(["memorable-content", "summary-stale", "manual"]);
 export type ConsolidationReason = z.infer<typeof ConsolidationReason>;
 

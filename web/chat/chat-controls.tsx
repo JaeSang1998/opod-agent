@@ -151,7 +151,7 @@ export function ChatControls({ characters, settings, onChange, onNewSession }: C
       />
       <SelectField
         className="h-8 w-28"
-        label="Thinking"
+        label="Internal reasoning"
         onChange={(value) => onChange("reasoningEffort", value as ReasoningEffort)}
         options={REASONING_EFFORTS.map((effort) => ({ label: effort, value: effort }))}
         value={settings.reasoningEffort}

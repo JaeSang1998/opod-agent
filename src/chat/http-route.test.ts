@@ -12,6 +12,7 @@ import { ScriptedProvider, textTurn, toolCallTurn } from "../testing/scripted-pr
 import type { AgentTool } from "../tools/index.js";
 import { BOND_XP_BY_GRADE } from "../memory/bond.js";
 import type { BondJudge } from "./bond-judge.js";
+import type { PhotoSelector } from "./photo-selector.js";
 const now = () => "2026-01-01T00:00:00Z";
 
 /** Assemble the real Hono app over stub stores + an injectable provider. */
@@ -20,6 +21,7 @@ function buildApp(
   tools?: AgentTool[],
   env: NodeJS.ProcessEnv = {},
   bondJudge?: BondJudge,
+  photoSelector?: PhotoSelector,
 ) {
   const memory = new StubMemoryStore(now);
   const queue = new StubJobQueue();
@@ -33,6 +35,7 @@ function buildApp(
     tools,
     log: noopLogger,
     bondJudge,
+    photoSelector,
   });
   return { app: createApp(container), memory, queue, provider };
 }
@@ -512,5 +515,74 @@ describe("independent bond judgement through HTTP", () => {
     expect(res.status).toBe(200);
     expect((await res.json() as OpenAI.Chat.Completions.ChatCompletion).choices[0]!.message.content).toBe("reply");
     expect(grant).not.toHaveBeenCalled();
+  });
+});
+
+describe("public character experience through HTTP", () => {
+  it.each([false, true])("separates public expressions from native reasoning and private rules; stream=%s", async stream => {
+    class PrivateReasoningProvider extends ScriptedProvider {
+      override async chatStream(req: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming) {
+        const source = await super.chatStream(req);
+        return (async function* () {
+          yield {
+            id: "private", object: "chat.completion.chunk", created: 0, model: req.model,
+            choices: [{ index: 0, delta: { role: "assistant", reasoning: "PRIVATE_NATIVE", reasoning_content: "PRIVATE_RULE", reasoning_details: [{ text: "PRIVATE_DETAIL" }] }, finish_reason: null }],
+          } as unknown as OpenAI.Chat.Completions.ChatCompletionChunk;
+          yield* source;
+        })();
+      }
+    }
+    const final = textTurn("커피 한 잔 하면서 쉬어 가자.");
+    Object.assign(final.message, { reasoning: "PRIVATE_NATIVE", reasoning_content: "PRIVATE_RULE", reasoning_details: [{ text: "PRIVATE_DETAIL" }] });
+    const provider = new PrivateReasoningProvider([
+      toolCallTurn([
+        { id: "thought", name: "express_thought", arguments: JSON.stringify({ text: "조금 편하게 쉬었으면 좋겠다." }) },
+        { id: "photo", name: "share_photo", arguments: JSON.stringify({ intent: "커피 사진을 보여 달라는 부탁" }) },
+      ]),
+      final,
+    ]);
+    const { app } = buildApp(provider, [], {}, { judge: async () => ({ ok: true, grade: 1 }) }, {
+      select: async input => input.eligiblePhotos.find(photo => photo.id.endsWith(":coffee"))?.id ?? null,
+    });
+    const response = await app.request("/v1/chat/completions", {
+      method: "POST", headers: IDENTITY,
+      body: JSON.stringify({ stream, messages: [{ role: "user", content: "커피 사진 보여 줄래?" }] }),
+    });
+    expect(response.status).toBe(200);
+    const wire = await response.text();
+    expect(wire).not.toMatch(/PRIVATE_|reasoning|tool_calls|친밀도|bondXp|criteria|opod_debug/);
+    if (stream) {
+      expect(reassembleSSE(wire)).toBe("커피 한 잔 하면서 쉬어 가자.");
+      const frames = wire.split("\n\n").filter(block => block.includes("event: character"));
+      const updates = Object.assign({}, ...frames.map(block => JSON.parse(block.split("\n").find(line => line.startsWith("data:"))!.slice(5))));
+      expect(updates).toMatchObject({
+        thought: "조금 편하게 쉬었으면 좋겠다.",
+        photo: { isMock: true },
+        relationship: { level: 1, change: "closer" },
+      });
+      expect(wire.indexOf('"relationship"')).toBeLessThan(wire.indexOf("[DONE]"));
+    } else {
+      const payload = JSON.parse(wire);
+      expect(payload.choices[0].message.content).toBe("커피 한 잔 하면서 쉬어 가자.");
+      expect(payload.opod).toMatchObject({
+        thought: "조금 편하게 쉬었으면 좋겠다.",
+        photo: { isMock: true },
+        relationship: { level: 1, change: "closer" },
+      });
+    }
+  });
+
+  it("does not report a positive change for a capped or replayed grant", async () => {
+    const { app, memory } = buildApp(new FakeProvider("고마워."), [], {}, { judge: async () => ({ ok: true, grade: 2 }) });
+    const nowMs = Date.now();
+    for (let i = 0; i < 4; i++) await memory.grantBond({ userId: "u1", characterId: "luna" }, { grade: 2, nowMs }, `seed-cap:${i}`);
+    const request = () => app.request("/v1/chat/completions", {
+      method: "POST", headers: IDENTITY,
+      body: JSON.stringify({ messages: [{ role: "user", content: "너랑 이야기해서 즐거워." }] }),
+    });
+    const first = await (await request()).json() as { opod: { relationship: { change: string; progress: number } } };
+    const replay = await (await request()).json() as typeof first;
+    expect(first.opod.relationship).toMatchObject({ change: "steady", progress: 0.5 });
+    expect(replay.opod.relationship).toMatchObject({ change: "steady", progress: 0.5 });
   });
 });

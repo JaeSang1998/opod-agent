@@ -9,6 +9,7 @@ import { classifyRequestError, createRequestSignal } from "../http/request-lifec
 import { type ToolLoopEvent, runToolLoop, runToolLoopStream } from "./tool-loop.js";
 import type { PreparedTurn } from "./chat-service.js";
 import { LLM_LOG_TYPE } from "../provider/llm-provider.js";
+import { publicCompletion } from "./character-experience.js";
 
 /** POST /v1/chat/completions — OpenAI-compatible, persona+memory-enriched. */
 export function chatRoute(container: Container): Hono {
@@ -52,12 +53,14 @@ export function chatRoute(container: Container): Hono {
     if (body.stream) {
       return streamSSE(c, async (sse) => {
         let assistant = "";
-        let completed = false;
         // Serialize every SSE write through one promise chain so debug event frames
         // (emitted mid-loop via onEvent) and chunk frames never interleave mid-frame.
         let chain: Promise<unknown> = Promise.resolve();
         const write = (frame: Parameters<typeof sse.writeSSE>[0]) =>
           (chain = chain.then(() => sse.writeSSE(frame)));
+        prepared.observeExperience?.(update => {
+          void write({ event: "character", data: JSON.stringify(update) });
+        });
         try {
           const stream = prepared.tools
             ? runToolLoopStream({
@@ -97,18 +100,17 @@ export function chatRoute(container: Container): Hono {
             write({ data: JSON.stringify(chunk) });
           }
           await chain;
+          // Judge only a completed reply. Public relationship feedback must
+          // arrive before DONE; native provider reasoning is never that feedback.
+          await prepared.postTurn(assistant);
+          await chain;
           await sse.writeSSE({ data: "[DONE]" });
-          completed = true;
         } catch (err) {
           const failure = classifyRequestError(err);
           container.log.error("stream error", { err: String(err), requestId: ctx.requestId });
           await sse.writeSSE({
             data: JSON.stringify(openaiError(failure.type, failure.message)),
           });
-        } finally {
-          // Never learn from a truncated/error reply. Consolidate only after the
-          // provider stream completed and the client received the DONE frame.
-          if (completed) await prepared.postTurn(assistant).catch(() => {});
         }
       });
     }
@@ -144,12 +146,12 @@ export function chatRoute(container: Container): Hono {
           },
         );
       await prepared.postTurn(res.choices[0]?.message?.content ?? "");
-      // The opt-in debug field is content-free: tool activity plus prompt
-      // provenance, never Persona/Memory text. Without the header the body stays
-      // exactly the completion as before.
-      return debug && prepared.promptDebug
-        ? c.json({ ...res, opod_debug: { events, prompt: prepared.promptDebug } })
-        : c.json(res);
+      const completion = prepared.experience ? publicCompletion(res) : res;
+      return c.json({
+        ...completion,
+        ...(prepared.experience && Object.keys(prepared.experience).length > 0 ? { opod: prepared.experience } : {}),
+        ...(debug && prepared.promptDebug ? { opod_debug: { events, prompt: prepared.promptDebug } } : {}),
+      });
     } catch (err) {
       const failure = classifyRequestError(err);
       container.log.error("chat error", { err: String(err), requestId: ctx.requestId });

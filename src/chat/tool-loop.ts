@@ -5,7 +5,6 @@ import {
   assembleToolCall,
   createClientChunkFilter,
   emptyCompletion,
-  reasoningOf,
   stopChunk,
   toStopCompletion,
 } from "./tool-loop-wire.js";
@@ -151,20 +150,12 @@ export async function* runToolLoopStream(
       // including its reasoning.
       if (isToolTurn) continue;
 
-      // Nonstandard "reasoning" fragment (delta.reasoning) with no content/tool_calls,
-      // in a turn not yet known to be a tool turn: stream it IMMEDIATELY, never buffer.
-      // Reasoning can never retroactively become content, so passing it through cannot
-      // mis-order a text turn. A tool turn's early reasoning (before its tool_calls
-      // fragment arrives) intentionally streams too: the field is nonstandard and
-      // ignored by strict OpenAI clients, whereas buffering minutes of thinking (see
-      // the live-verified gemma behavior) makes clients look dead.
-      if (!piece && reasoningOf(delta) !== "") {
-        const out = forClient(chunk);
-        if (out) yield out;
-        continue;
-      }
+      // Keep at most one opening frame. Some providers emit a role on every
+      // native-reasoning fragment; neither that text nor an unbounded buffer
+      // belongs on the public character channel.
+      if (!piece && !delta?.refusal && !finishReason && !chunk.usage && buffer.length > 0) continue;
 
-      if (piece) {
+      if (piece || delta?.refusal) {
         // Content settled the turn's nature: flush what we held, then stream.
         if (!flushed) {
           for (const b of buffer) {
