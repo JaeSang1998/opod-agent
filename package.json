@@ -4,7 +4,7 @@
   "description": "Character-chat AI Agent service for OPOD — OpenAI-compatible chat with dynamic persona and layered memory.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "26.12.1"
   },
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
