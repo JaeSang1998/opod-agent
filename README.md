@@ -9,6 +9,9 @@ glossary and [`docs/adr/`](./docs/adr/) for the decisions behind the design.
 
 ## Quick start
 
+Use Node.js **26.12.1**, pinned in `.nvmrc`, `package.json`, CI, and Docker images.
+This includes the [October 21, 2026 security fixes](https://nodejs.org/en/blog/release/v26.12.1/).
+
 ```bash
 npm install
 cp .env.example .env      # fill in LLM_API_KEY (OpenAI) or point at Ollama
