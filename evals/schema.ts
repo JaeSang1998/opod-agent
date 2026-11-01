@@ -795,7 +795,7 @@ export const ScenarioSchema = z
         minTranscriptChars: z.number().int().positive().default(1200),
         forbiddenPatterns: z.array(z.string().min(1)).default([]),
       })
-      .default({}),
+      .prefault({}),
     passThreshold: z.number().min(0).max(1).default(0.78),
   })
   .superRefine((scenario, ctx) => {

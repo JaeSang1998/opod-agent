@@ -96,7 +96,7 @@ describe("runToolLoop", () => {
 
     // The first call offers tools with tool_choice "auto".
     expect(provider.requests[0]?.tool_choice).toBe("auto");
-    expect(provider.requests[0]?.tools?.map((t) => t.function.name)).toEqual(["get_time"]);
+    expect(provider.requests[0]?.tools?.flatMap((t) => (t.type === "function" ? [t.function.name] : []))).toEqual(["get_time"]);
 
     // The second call carries the assistant tool_call message and its tool result.
     const second = provider.requests[1]!.messages as Msg[];

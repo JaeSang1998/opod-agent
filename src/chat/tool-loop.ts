@@ -42,7 +42,7 @@ const DEFAULT_MAX_ITERATIONS = 5;
 const RESULT_PREVIEW = 200;
 
 type Message = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;
+type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall;
 
 /**
  * Server-side tool loop (non-streaming). Repeatedly asks the provider for a reply;
@@ -73,7 +73,7 @@ export async function runToolLoop(
     );
 
     const message = completion.choices[0]?.message;
-    const toolCalls = message?.tool_calls;
+    const toolCalls = message?.tool_calls?.filter((call): call is ToolCall => call.type === "function");
     if (!message || !toolCalls || toolCalls.length === 0) return completion;
 
     messages.push(message as Message);

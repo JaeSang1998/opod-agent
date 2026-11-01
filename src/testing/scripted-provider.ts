@@ -105,7 +105,7 @@ async function* toChunks(
   if (toolCalls && toolCalls.length > 0) {
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i];
-      if (!tc) continue;
+      if (tc?.type !== "function") continue;
       // First fragment: index + id + name (empty args); later fragments carry
       // argument slices — exactly how a real provider streams tool calls.
       yield mk({ tool_calls: [{ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] });
