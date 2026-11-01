@@ -3,7 +3,7 @@ import type OpenAI from "openai";
 type Chunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 type Delta = Chunk["choices"][number]["delta"];
 type DeltaToolCall = Delta["tool_calls"] extends (infer T)[] | undefined ? T : never;
-type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;
+type ToolCall = OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall;
 
 /** Keeps only the first streamed assistant role while preserving later payload fields. */
 export function createClientChunkFilter(): (chunk: Chunk) => Chunk | null {

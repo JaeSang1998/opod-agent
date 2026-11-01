@@ -10,7 +10,7 @@ export interface ToolContext {
 
 export interface AgentTool {
   /** OpenAI function-tool definition sent to the provider (type: "function"). */
-  definition: OpenAI.Chat.Completions.ChatCompletionTool;
+  definition: OpenAI.Chat.Completions.ChatCompletionFunctionTool;
   /** Executes with raw parsed-JSON args; returns the string for the tool message. */
   execute(args: unknown, ctx: ToolContext): Promise<string>;
 }
@@ -20,7 +20,7 @@ export interface AgentTool {
  *  (never throws) so the loop can hand failures back to the model in-character. */
 export async function executeToolCall(
   tools: AgentTool[],
-  call: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+  call: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall,
   ctx: ToolContext,
 ): Promise<string> {
   if (ctx.signal?.aborted) throw ctx.signal.reason;

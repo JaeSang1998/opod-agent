@@ -8,7 +8,7 @@ const ctx: ToolContext = { log: noopLogger };
 function toolCall(
   name: string,
   args: string,
-): OpenAI.Chat.Completions.ChatCompletionMessageToolCall {
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall {
   return { id: "call_1", type: "function", function: { name, arguments: args } };
 }
 
